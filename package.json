@@ -1,0 +1,8 @@
+{
+  "name": "britz-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "knowledge": "node scripts/build-knowledge.mjs"
+  }
+}

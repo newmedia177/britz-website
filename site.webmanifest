@@ -1,0 +1,16 @@
+{
+  "name": "Autolackiererei Britz",
+  "short_name": "Britz",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3ec",
+  "theme_color": "#f7f3ec",
+  "lang": "de",
+  "icons": [
+    {
+      "src": "assets/img/logo-britz.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}
