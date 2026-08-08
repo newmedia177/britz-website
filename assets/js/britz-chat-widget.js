@@ -540,13 +540,6 @@
 
     function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-    function greeting() {
-      var hEl = new Date().getHours();
-      var g = hEl < 11 ? "Guten Morgen" : (hEl < 18 ? "Guten Tag" : "Guten Abend");
-      return g + ", ich bin " + CONFIG.assistantName +
-        " vom Service-Team. Ich schaue mir Ihr Anliegen direkt an.";
-    }
-
     function row(role, content, imgs, typing) {
       if (!dayShown) {
         var d = document.createElement("div");
@@ -683,10 +676,10 @@
       if (!agentJoined) {
         agentJoined = true;
         joinedAt = Date.now();
-        setTimeout(function () {
-          joinNotice();
-          row("bot", greeting());
-        }, 550);
+        // Nur der Beitritts-Hinweis. Die Begruessung kommt aus der
+        // echten Antwort (zeitKontext: Berliner Zeit) - sonst haette
+        // der Kunde zwei Begruessungen und ggf. die falsche Tageszeit.
+        setTimeout(function () { joinNotice(); }, 550);
       }
 
       setState("thinking", imgs.length ? "Pr\u00fcft Foto" : "Schreibt");
