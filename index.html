@@ -170,6 +170,9 @@
        breit. Etwas kleinerer Satz haelt die Adressen zweizeilig. */
     [data-footgrid] address{font-size:13.5px !important}
     [data-footgrid] address > div{font-size:13.5px !important}
+    /* Umbruch erzwingen statt dem Zeilenfall zu vertrauen:
+       "Autolackiererei" / "in Berlin-Britz". */
+    [data-mobbr]{display:inline}
     /* Fusszeile: gestapelt statt zerrissen umgebrochen */
     [data-legalbar]{padding-right:0 !important;gap:0 11px !important;
       flex-wrap:nowrap !important;align-items:center}
@@ -195,6 +198,7 @@
   /* W-Signet */
   .wsig{position:fixed;right:24px;bottom:24px;z-index:99999;opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .45s ease,transform .45s ease}
   .wsig.is-visible{opacity:1;transform:none;pointer-events:auto}
+  [data-mobbr]{display:none}
   /* Chat-Punkt im Footer: ruhiges Auf- und Abblenden, 4,2s je Zyklus.
      Bewusst langsam - ein schnelles Blinken wirkt wie ein Alarm. */
   @keyframes britzPulse{
@@ -713,7 +717,7 @@
         <p style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6c665c;margin:0 0 15px">Standorte</p>
         <address style="font-style:normal;display:flex;flex-direction:column;gap:16px">
           <div style="font-size:14.5px;line-height:1.55;color:#57524a">
-            <span style="display:block;font-weight:600;color:#211d17">Autolackiererei in&nbsp;Berlin-Britz</span>
+            <span style="display:block;font-weight:600;color:#211d17">Autolackiererei <br data-mobbr>in&nbsp;Berlin-Britz</span>
             Haarlemer&nbsp;Str.&nbsp;48-54<br>12359 Berlin
           </div>
           <div style="font-size:14.5px;line-height:1.55;color:#57524a">
