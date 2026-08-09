@@ -159,8 +159,8 @@
     overflow-x:hidden !important;
     scroll-snap-type:none !important}
   @media(max-width:640px){
-    [data-baknob]{width:54px !important;height:54px !important;
-      font-size:18px !important}
+    [data-baknob]{width:62px !important;height:62px !important;
+      font-size:20px !important;border-width:2.5px !important}
   }
   @media(max-width:640px){
     [data-footgrid]{grid-template-columns:1fr 1fr !important;gap:22px 16px !important}
@@ -484,73 +484,73 @@
 
         <div data-ba onPointerDown="{{ baArea0 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/delle-alt.jpg" alt="Delle – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r0 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r0 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/delle-neu.jpg" alt="Delle – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p0 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag0 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag0 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p0 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag0 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag0 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
         <div data-ba onPointerDown="{{ baArea1 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/felge-alt.jpg" alt="Felge – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r1 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r1 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/felge-neu.jpg" alt="Felge – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p1 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag1 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag1 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p1 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag1 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag1 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
         <div data-ba onPointerDown="{{ baArea2 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/kratzer-alt.jpg" alt="Kratzer – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r2 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r2 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/kratzer-neu.jpg" alt="Kratzer – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p2 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag2 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag2 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p2 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag2 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag2 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
         <div data-ba onPointerDown="{{ baArea3 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/motor-alt.jpg" alt="Motorrad – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r3 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r3 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/motor-neu.jpg" alt="Motorrad – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p3 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag3 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag3 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p3 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag3 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag3 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
         <div data-ba onPointerDown="{{ baArea4 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/maybach-alt.jpg" alt="Maybach – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r4 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r4 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/maybach-neu.jpg" alt="Maybach – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p4 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag4 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag4 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p4 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag4 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag4 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
         <div data-ba onPointerDown="{{ baArea5 }}" style="position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#000;user-select:none;-webkit-user-select:none;touch-action:pan-y;cursor:ew-resize">
           <img loading="lazy" decoding="async" src="assets/img/chevi-alt.jpg" alt="Oldtimer – vorher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
-          <div style="position:absolute;inset:0;clip-path:inset(0 {{ r5 }}% 0 0)">
+          <div data-baclip style="position:absolute;inset:0;clip-path:inset(0 {{ r5 }}% 0 0)">
             <img loading="lazy" decoding="async" src="assets/img/chevi-neu.jpg" alt="Oldtimer – nachher" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
           </div>
           <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Vorher</span>
           <span style="position:absolute;top:10px;right:10px;background:rgba(242,171,0,0.85);color:#fff;font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px;pointer-events:none">Nachher</span>
-          <div style="position:absolute;top:0;bottom:0;left:{{ p5 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
-            <div onPointerDown="{{ startDrag5 }}" style="position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag5 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
+          <div data-baline style="position:absolute;top:0;bottom:0;left:{{ p5 }}%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none;box-shadow:0 0 8px rgba(0,0,0,0.6)">
+            <div onPointerDown="{{ startDrag5 }}" style="position:absolute;top:0;bottom:0;left:50%;width:76px;transform:translateX(-50%);pointer-events:auto;touch-action:none;cursor:ew-resize"></div><div onPointerDown="{{ startDrag5 }}" data-baknob style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;border-radius:50%;background:#fff;border:2px solid #f2ab00;cursor:ew-resize;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:17px;box-shadow:0 2px 10px rgba(0,0,0,0.35)">↔</div>
           </div>
         </div>
 
@@ -1319,9 +1319,21 @@ class Component extends DCLogic {
       try { container.setPointerCapture(pid); } catch (_) {}
       sperren(true);
     };
+    // WICHTIG: Waehrend des Zugs NICHT ueber den Zustand gehen. Jede
+    // Zustandsaenderung zeichnet die Karte samt Knopf neu - iOS bricht
+    // die Beruehrung ab, sobald das beruehrte Element ersetzt wird.
+    // Deshalb: beim Ziehen direkt am Bild arbeiten, den Zustand erst
+    // beim Loslassen einmal setzen.
+    const clipEl = container.querySelector('[data-baclip]');
+    const lineEl = container.querySelector('[data-baline]');
+    let lastV = null;
     const apply = (ev) => {
       const rect = container.getBoundingClientRect();
-      this.setSlider(i, ((ev.clientX - rect.left) / rect.width) * 100);
+      let v = ((ev.clientX - rect.left) / rect.width) * 100;
+      v = Math.max(0, Math.min(100, v));
+      lastV = v;
+      if (clipEl) clipEl.style.clipPath = 'inset(0 ' + (100 - v) + '% 0 0)';
+      if (lineEl) lineEl.style.left = v + '%';
     };
 
     if (active) { e.preventDefault(); greifen(); apply(e); }
@@ -1346,6 +1358,9 @@ class Component extends DCLogic {
       window.removeEventListener('pointercancel', up);
       try { container.releasePointerCapture(pid); } catch (_) {}
       sperren(false);
+      // Jetzt erst den Zustand nachziehen - ein einziges Neuzeichnen,
+      // der Finger ist schon weg.
+      if (lastV !== null) this.setSlider(i, lastV);
     };
 
     this._baUp = up;

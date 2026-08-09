@@ -51,6 +51,21 @@
   nav a[data-tab].is-active{color:#ffffff}
   a[data-inline]{color:#855a02;text-decoration:none;box-shadow:inset 0 -1px 0 rgba(242,171,0,.5);transition:box-shadow .2s ease,color .2s ease}
   a[data-inline]:hover{color:#211d17;box-shadow:inset 0 -2px 0 #f2ab00}
+
+  /* ---- Kapitel-Tabs auf dem Handy: eine wischbare Zeile -------------
+     Fuenf Punkte brauchen ~390px, das Display bietet ~340. Statt in
+     zwei unruhige Zeilen zu brechen, laeuft die Zeile seitlich durch;
+     der weiche Auslauf rechts zeigt, dass mehr kommt. */
+  @media(max-width:760px){
+    [data-tabbar]{flex-wrap:nowrap !important;flex-basis:100%;
+      overflow-x:auto;overflow-y:hidden;
+      -webkit-overflow-scrolling:touch;scrollbar-width:none;
+      margin:0 -18px;padding:2px 40px 8px 18px;
+      -webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent);
+      mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent)}
+    [data-tabbar]::-webkit-scrollbar{display:none}
+    [data-tabbar] a{padding:6px 0;flex-shrink:0}
+  }
 </style>
 </helmet>
 
@@ -59,7 +74,7 @@
   <header style="position:sticky;top:0;z-index:60;background:rgba(12,12,13,0.86);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid rgba(168,171,178,0.22)">
     <div style="max-width:1160px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:2px 20px;padding:10px clamp(18px,5vw,40px)">
       <a href="index.html" style="display:inline-flex;align-items:center;gap:9px;text-decoration:none;color:#e2e4e8;font-size:14.5px;font-weight:500;min-height:44px;line-height:44px;flex-shrink:0" style-hover="color:#ffffff"><span style="font-size:17px;line-height:1">←</span>Zur Startseite</a>
-      <nav style="display:flex;flex-wrap:wrap;align-items:center;gap:6px clamp(16px,2.4vw,30px);padding-bottom:4px">
+      <nav data-tabbar style="display:flex;flex-wrap:wrap;align-items:center;gap:6px clamp(16px,2.4vw,30px);padding-bottom:4px">
         <a data-tab href="#impressum" style="text-decoration:none;font-weight:500;font-size:clamp(14px,1.05vw,15px);letter-spacing:0.012em;line-height:1;white-space:nowrap;color:#e2e4e8" style-hover="color:#ffffff">Impressum</a>
         <a data-tab href="#datenschutz" style="text-decoration:none;font-weight:500;font-size:clamp(14px,1.05vw,15px);letter-spacing:0.012em;line-height:1;white-space:nowrap;color:#e2e4e8" style-hover="color:#ffffff">Datenschutz</a>
         <a data-tab href="#cookies" style="text-decoration:none;font-weight:500;font-size:clamp(14px,1.05vw,15px);letter-spacing:0.012em;line-height:1;white-space:nowrap;color:#e2e4e8" style-hover="color:#ffffff">Cookies</a>
