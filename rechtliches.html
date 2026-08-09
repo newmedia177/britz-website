@@ -81,6 +81,21 @@
     [data-tabbar]::-webkit-scrollbar{display:none}
     [data-tabbar] a{flex-shrink:0;font-size:13.5px !important}
   }
+  /* ---- Schutzrechte: eine leise Zeile, kein Absatz ------------------ */
+  [data-rights]{display:flex;align-items:center;flex-wrap:wrap;gap:9px;
+    max-width:1160px;margin:clamp(26px,3.4vw,38px) auto 0;
+    padding-top:clamp(18px,2.4vw,24px);
+    border-top:1px solid rgba(255,255,255,0.10);
+    font-size:12.5px;letter-spacing:0.03em;color:#7b8087}
+  [data-mono]{display:inline-flex;align-items:center;justify-content:center;
+    width:28px;height:28px;border-radius:50%;
+    border:1px solid rgba(255,255,255,0.22);
+    font-family:Anton,sans-serif;font-size:11.5px;letter-spacing:0.06em;
+    color:#e8eaed;padding-left:0.06em;flex-shrink:0}
+  [data-rightsdot]{opacity:0.4}
+  @media(max-width:560px){
+    [data-rights]{gap:8px;font-size:12px;margin-top:24px;padding-top:18px}
+  }
 </style>
 </helmet>
 
@@ -443,6 +458,15 @@
         <span style="font-size:14px;line-height:1.45;color:#9ea2a8">Haarlemer Straße 48 · 12359 Berlin</span>
       </div>
     </div>
+
+    <p data-rights>
+      <span data-mono>JW</span>
+      <span>Gestaltung &amp; Technik</span>
+      <span data-rightsdot>·</span>
+      <span>Inhalte urheberrechtlich geschützt</span>
+      <span data-rightsdot>·</span>
+      <span>© {{ jahr }}</span>
+    </p>
   </footer>
 
 </div>
@@ -527,7 +551,7 @@ class Component extends DCLogic {
   }
 
   renderVals() {
-    return { stand: '8. August 2026' };
+    return { stand: '8. August 2026', jahr: new Date().getFullYear() };
   }
 }
 </script>
