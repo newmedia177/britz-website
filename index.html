@@ -77,6 +77,10 @@
   a[data-telfoot] [data-telnum]::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;border-radius:2px;background:#f2ab00;transform:scaleX(0);transform-origin:left center;transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
   a[data-telfoot]:hover [data-telnum]::after,a[data-telfoot]:focus-visible [data-telnum]::after{transform:scaleX(1)}
   a[data-telfoot]:hover,a[data-telfoot]:focus-visible{color:#855a02}
+  /* Chat-Knopf im Footer: dieselbe einfahrende Linie wie bei der
+     Telefonnummer darueber. Nur unter dem Text, nicht unter dem Punkt. */
+  button[data-chatfoot] [data-chatlbl]::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;border-radius:2px;background:#f2ab00;transform:scaleX(0);transform-origin:left center;transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
+  button[data-chatfoot]:hover [data-chatlbl]::after,button[data-chatfoot]:focus-visible [data-chatlbl]::after{transform:scaleX(1)}
   a[data-telfoot]{width:fit-content}
   .page{position:relative;z-index:2;background:#f7f3ec;box-shadow:0 26px 50px -14px rgba(0,0,0,.38)}
   .page-spacer{height:var(--footer-h,360px);pointer-events:none}
@@ -708,7 +712,7 @@
       </div>
 
       <nav aria-label="Leistungen" style="display:flex;flex-direction:column">
-        <p style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6c665c;margin:0 0 15px">Leistungen</p>
+        <p style="display:flex;align-items:center;gap:10px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6c665c;margin:0 0 15px"><span style="display:inline-block;width:22px;height:2px;background:#f2ab00;border-radius:2px;flex-shrink:0"></span>Leistungen</p>
         <div style="display:flex;flex-direction:column;gap:7px">
           <a href="#lackierung" style="text-decoration:none;color:#57524a;font-size:14.5px;line-height:1.45;transition:color .18s ease" style-hover="color:#855a02">Autolackierung &amp; Komplettlackierung</a>
           <a href="#arbeiten" style="text-decoration:none;color:#57524a;font-size:14.5px;line-height:1.45;transition:color .18s ease" style-hover="color:#855a02">Unfallinstandsetzung</a>
@@ -720,7 +724,7 @@
       </nav>
 
       <div style="display:flex;flex-direction:column">
-        <p style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6c665c;margin:0 0 15px">Standorte</p>
+        <p style="display:flex;align-items:center;gap:10px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6c665c;margin:0 0 15px"><span style="display:inline-block;width:22px;height:2px;background:#f2ab00;border-radius:2px;flex-shrink:0"></span>Standorte</p>
         <address style="font-style:normal;display:flex;flex-direction:column;gap:16px">
           <div style="font-size:14.5px;line-height:1.55;color:#57524a">
             <span style="display:block;font-weight:600;color:#211d17">Autolackiererei <br data-mobbr>in&nbsp;Berlin-Britz</span>
@@ -734,10 +738,10 @@
       </div>
 
       <div style="display:flex;flex-direction:column">
-        <p style="font-family:'DM Sans',sans-serif;font-weight:700;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6c665c;margin:0 0 15px">Kontakt</p>
+        <p style="display:flex;align-items:center;gap:10px;font-family:'DM Sans',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#6c665c;margin:0 0 15px"><span style="display:inline-block;width:22px;height:2px;background:#f2ab00;border-radius:2px;flex-shrink:0"></span>Kontakt</p>
         <a href="tel:03060797930" data-telfoot style="display:inline-flex;align-items:center;align-self:flex-start;text-decoration:none;color:#211d17;font-size:19px;font-weight:700;line-height:1.25;letter-spacing:0.01em;padding:2px 0 6px;min-height:40px;box-sizing:border-box;transition:color .2s ease"><span data-telnum style="position:relative">030 60797930</span></a>
         <span style="display:grid;grid-template-columns:max-content max-content;justify-content:start;width:max-content;align-self:start;column-gap:10px;row-gap:3px;font-size:14.5px;line-height:1.55;color:#57524a;font-variant-numeric:tabular-nums"><span>Mo – Do</span><span>8:00 – 17:00 Uhr</span><span>Freitag</span><span>8:00 – 15:00 Uhr</span></span>
-        <button onClick="{{ openChat }}" style="align-self:flex-start;display:inline-flex;align-items:center;gap:8px;margin-top:12px;background:none;border:0;padding:0;font-family:'DM Sans',sans-serif;font-size:14.5px;line-height:1.45;font-weight:600;color:#855a02;cursor:pointer;text-align:left;transition:color .18s ease" style-hover="color:#211d17"><span data-nodark data-pulse style="width:7px;height:7px;border-radius:50%;background:#3f9d54;flex-shrink:0"></span>Chat rund um die&nbsp;Uhr</button>
+        <button data-chatfoot onClick="{{ openChat }}" style="align-self:flex-start;display:inline-flex;align-items:center;gap:8px;margin-top:12px;background:none;border:0;padding:0;font-family:'DM Sans',sans-serif;font-size:14.5px;line-height:1.45;font-weight:600;color:#855a02;cursor:pointer;text-align:left;transition:color .18s ease" style-hover="color:#6b4802"><span data-nodark data-pulse style="width:7px;height:7px;border-radius:50%;background:#3f9d54;flex-shrink:0"></span><span data-chatlbl style="position:relative">Chat rund um die&nbsp;Uhr</span></button>
       </div>
 
     </div>
