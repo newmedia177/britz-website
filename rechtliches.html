@@ -8,8 +8,8 @@
 <body>
 <x-dc>
 <helmet>
-<title>Impressum, Datenschutz &amp; Cookies – Autolackiererei Britz</title>
-<meta name="description" content="Impressum, Datenschutzerklärung, Cookie-Richtlinien und Ihre Rechte – Autolackiererei Britz, Meisterbetrieb in Berlin-Britz.">
+<title>Impressum, Datenschutz &amp; Cookies – Autolackiererei in Britz</title>
+<meta name="description" content="Impressum, Datenschutzerklärung, Cookie-Richtlinien und Ihre Rechte – Autolackiererei in Britz, Meisterbetrieb in Berlin-Britz.">
 <meta name="robots" content="index,follow">
 <link rel="canonical" href="https://www.autolackiererei-britz.de/rechtliches.html">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -93,8 +93,13 @@
     font-family:Anton,sans-serif;font-size:11.5px;letter-spacing:0.06em;
     color:#e8eaed;padding-left:0.06em;flex-shrink:0}
   [data-rightsdot]{opacity:0.4}
+  [data-rightsbrand]{display:inline-flex;align-items:center;gap:9px}
   @media(max-width:560px){
-    [data-rights]{gap:8px;font-size:12px;margin-top:24px;padding-top:18px}
+    /* Zwei bewusste Zeilen statt eines zufaelligen Umbruchs. Beide
+       beginnen auf derselben Kante wie der Rest der Fusszeile. */
+    [data-rights]{gap:8px;font-size:12px;margin-top:24px;padding-top:18px;
+      flex-direction:column;align-items:flex-start}
+    [data-rightsdot]{display:none}
   }
 </style>
 </helmet>
@@ -121,7 +126,7 @@
       <p style="font-size:clamp(16px,1.7vw,19px);line-height:1.6;color:#c8cacf;margin:clamp(20px,2.6vw,28px) 0 0;max-width:56ch">Wer hinter dieser Seite steht, was mit Ihren Daten passiert und was auf Ihrem Gerät gespeichert wird. In fünf Kapiteln, in verständlicher Sprache.</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:clamp(28px,3.4vw,40px);padding-top:20px;border-top:1px solid rgba(255,255,255,0.14);font-size:13.5px;color:#9ea2a8">
         <span>Stand: {{ stand }}</span>
-        <span>Autolackiererei Britz · Haarlemer Straße 48 · 12359 Berlin</span>
+        <span>Autolackiererei in Britz · Haarlemer Straße 48-54 · 12359 Berlin</span>
       </div>
     </div>
   </section>
@@ -145,11 +150,11 @@
           <h3 style="font-weight:700;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#6c665c;margin:0 0 16px">Anbieter</h3>
           <dl style="display:grid;grid-template-columns:minmax(120px,150px) 1fr;gap:12px 22px;margin:0;font-size:16px;line-height:1.55">
             <dt style="color:#6c665c">Betrieb</dt>
-            <dd style="margin:0;color:#211d17;font-weight:600">Autolackiererei Britz</dd>
+            <dd style="margin:0;color:#211d17;font-weight:600">Autolackiererei in Britz</dd>
             <dt style="color:#6c665c">Inhaber</dt>
             <dd style="margin:0;color:#211d17">Dirk Schumann</dd>
             <dt style="color:#6c665c">Anschrift</dt>
-            <dd style="margin:0;color:#211d17">Haarlemer Straße 48<br>12359 Berlin<br>Deutschland</dd>
+            <dd style="margin:0;color:#211d17">Haarlemer Straße 48-54<br>12359 Berlin<br>Deutschland</dd>
             <dt style="color:#6c665c">Telefon</dt>
             <dd style="margin:0"><a data-inline href="tel:03060797930">030 60797930</a></dd>
             <dt style="color:#6c665c">E-Mail</dt>
@@ -221,7 +226,7 @@
 
         <div>
           <h3 style="font-weight:700;font-size:17px;color:#211d17;margin:0 0 10px">1. Verantwortlicher</h3>
-          <p style="font-size:15.5px;line-height:1.62;color:#57524a;margin:0">Verantwortlich im Sinne der DSGVO ist die Autolackiererei Britz, Haarlemer Straße 48, 12359 Berlin. Anliegen zum Datenschutz richten Sie bitte in Textform an <a data-inline href="mailto:info@autolackiererei-britz.de">info@autolackiererei-britz.de</a>. Welche Rechte Sie uns gegenüber haben, steht in <a data-inline href="#rechte">Kapitel 04</a>.</p>
+          <p style="font-size:15.5px;line-height:1.62;color:#57524a;margin:0">Verantwortlich im Sinne der DSGVO ist die Autolackiererei in Britz, Haarlemer Straße 48-54, 12359 Berlin. Anliegen zum Datenschutz richten Sie bitte in Textform an <a data-inline href="mailto:info@autolackiererei-britz.de">info@autolackiererei-britz.de</a>. Welche Rechte Sie uns gegenüber haben, steht in <a data-inline href="#rechte">Kapitel 04</a>.</p>
         </div>
 
         <div>
@@ -454,18 +459,18 @@
     <div style="max-width:1160px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 28px">
       <a href="index.html" style="display:inline-flex;align-items:center;gap:10px;text-decoration:none;font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(18px,2.4vw,24px);letter-spacing:-0.005em;color:#f5f5f6;min-height:44px" style-hover="color:#ffce4d"><span style="font-size:20px;line-height:1">←</span>Zurück zur Startseite</a>
       <div data-colophon style="display:flex;flex-direction:column;gap:5px;min-height:44px;justify-content:center">
-        <span style="font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(15px,1.7vw,17px);letter-spacing:0.02em;line-height:1.1;color:#f5f5f6">Autolackiererei Britz</span>
-        <span style="font-size:14px;line-height:1.45;color:#9ea2a8">Haarlemer Straße 48 · 12359 Berlin</span>
+        <span style="font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(15px,1.7vw,17px);letter-spacing:0.02em;line-height:1.1;color:#f5f5f6">Autolackiererei in Britz</span>
+        <span style="font-size:14px;line-height:1.45;color:#9ea2a8">Haarlemer Straße 48-54 · 12359 Berlin</span>
       </div>
     </div>
 
     <p data-rights>
-      <span data-mono>JW</span>
-      <span>Gestaltung &amp; Technik</span>
-      <span data-rightsdot>·</span>
+      <span data-rightsbrand>
+        <span data-mono>JW</span>
+        <span>Smartpage © {{ jahr }}</span>
+      </span>
+      <span data-rightsdot>|</span>
       <span>Inhalte urheberrechtlich geschützt</span>
-      <span data-rightsdot>·</span>
-      <span>© {{ jahr }}</span>
     </p>
   </footer>
 
