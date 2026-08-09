@@ -40,6 +40,29 @@
   /* Grundregel steht bewusst hier oben: die Media-Regel weiter unten
      schaltet den Umbruch ein und muss deshalb spaeter kommen. */
   [data-mobbr]{display:none}
+  /* ---- Grossansicht der Hofbilder (nur Handy) ---------------------- */
+  [data-zoomhint]{display:none}
+  @media(max-width:640px){
+    [data-zoom]{cursor:zoom-in}
+    [data-zoomhint]{display:block;margin:10px 0 0;font-size:12.5px;
+      letter-spacing:0.02em;color:#6c665c}
+  }
+  .zoomlay{position:fixed;inset:0;z-index:100000;display:flex;
+    align-items:center;justify-content:center;padding:16px;
+    background:rgba(10,10,11,0.94);
+    opacity:0;pointer-events:none;transition:opacity .26s ease}
+  .zoomlay.is-open{opacity:1;pointer-events:auto}
+  .zoomlay img{max-width:100%;max-height:100%;object-fit:contain;
+    border-radius:12px;transform:scale(.965);
+    transition:transform .3s cubic-bezier(0.22,0.61,0.36,1)}
+  .zoomlay.is-open img{transform:none}
+  .zoomclose{position:absolute;top:calc(12px + env(safe-area-inset-top));
+    right:12px;width:44px;height:44px;border:0;border-radius:50%;
+    background:rgba(255,255,255,0.12);color:#fff;font-size:20px;
+    line-height:1;cursor:pointer;display:flex;align-items:center;
+    justify-content:center}
+  @media(prefers-reduced-motion:reduce){
+    .zoomlay,.zoomlay img{transition:none} }
   /* Telefon, Adresse und Zeiten stehen auf dem Handy bereits im Footer.
      Ueber der Karte wuerden sie den Weg nur verlaengern. */
   @media(max-width:640px){ [data-kontaktkarten]{display:none !important} }
@@ -499,9 +522,10 @@
         </li>
       </ul>
       <div data-hofimgs style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:clamp(18px,2.5vw,26px)">
-        <img loading="lazy" decoding="async" src="assets/img/auto-britz-sommer.jpg" alt="Einfahrt zum Werkstatthof der Autolackiererei in Britz" style="width:100%;aspect-ratio:5/6;object-fit:cover;border-radius:14px;display:block">
-        <img loading="lazy" decoding="async" src="assets/img/autolackiererei-britz.jpg" alt="Fahrzeug vor dem Büro der Autolackiererei in Britz" style="width:100%;aspect-ratio:5/6;object-fit:cover;border-radius:14px;display:block">
+        <img data-zoom loading="lazy" decoding="async" src="assets/img/auto-britz-sommer.jpg" alt="Einfahrt zum Werkstatthof der Autolackiererei in Britz" style="width:100%;aspect-ratio:5/6;object-fit:cover;border-radius:14px;display:block">
+        <img data-zoom loading="lazy" decoding="async" src="assets/img/autolackiererei-britz.jpg" alt="Fahrzeug vor dem Büro der Autolackiererei in Britz" style="width:100%;aspect-ratio:5/6;object-fit:cover;border-radius:14px;display:block">
       </div>
+      <p data-zoomhint>Zum Vergrößern antippen</p>
     </div>
   </section>
 
@@ -896,6 +920,69 @@ class Component extends DCLogic {
     setTimeout(() => this.updateLogo(), 60);
     setTimeout(() => this.updateLogo(), 400);
     this.initBaTouch();
+    this.initZoom();
+  }
+
+  /* ---- Grossansicht der Hofbilder ------------------------------------
+     Nur auf dem Handy, weil die Bilder dort klein nebeneinander stehen.
+     Schliessen ueber: Flaeche antippen, X, Escape, Zurueck-Taste. */
+  initZoom() {
+    if (this._zoomOn) return;
+    this._zoomOn = true;
+
+    const lay = document.createElement('div');
+    lay.className = 'zoomlay';
+    lay.setAttribute('role', 'dialog');
+    lay.setAttribute('aria-modal', 'true');
+    lay.setAttribute('aria-hidden', 'true');
+    const bild = document.createElement('img');
+    const zu = document.createElement('button');
+    zu.type = 'button';
+    zu.className = 'zoomclose';
+    zu.setAttribute('aria-label', 'Schließen');
+    zu.textContent = '\u2715';
+    lay.appendChild(bild);
+    lay.appendChild(zu);
+    document.body.appendChild(lay);
+
+    let offen = false, zurueck = null;
+
+    const schliessen = (viaVerlauf) => {
+      if (!offen) return;
+      offen = false;
+      lay.classList.remove('is-open');
+      lay.setAttribute('aria-hidden', 'true');
+      document.documentElement.style.overflow = '';
+      if (!viaVerlauf && zurueck) { zurueck = null; history.back(); }
+      else { zurueck = null; }
+      setTimeout(() => { if (!offen) bild.src = ''; }, 320);
+    };
+
+    const oeffnen = (el) => {
+      if (offen) return;
+      offen = true;
+      bild.src = el.currentSrc || el.src;
+      bild.alt = el.alt || '';
+      lay.classList.add('is-open');
+      lay.setAttribute('aria-hidden', 'false');
+      document.documentElement.style.overflow = 'hidden';
+      zu.focus();
+      // Zurueck-Taste schliesst, statt die Seite zu verlassen
+      try { history.pushState({ zoom: 1 }, ''); zurueck = true; } catch (_) {}
+    };
+
+    document.addEventListener('click', (e) => {
+      const img = e.target.closest && e.target.closest('[data-zoom]');
+      if (!img) return;
+      if (!window.matchMedia('(max-width:640px)').matches) return;
+      e.preventDefault();
+      oeffnen(img);
+    });
+    lay.addEventListener('click', () => schliessen(false));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') schliessen(false);
+    });
+    window.addEventListener('popstate', () => schliessen(true));
   }
 
   /* ---- Vorher/Nachher per Finger ------------------------------------
