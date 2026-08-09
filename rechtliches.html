@@ -82,8 +82,12 @@
     [data-tabbar] a{flex-shrink:0;font-size:13.5px !important}
   }
   /* ---- Schutzrechte: eine leise Zeile, kein Absatz ------------------ */
-  [data-rights]{display:flex;align-items:center;flex-wrap:wrap;gap:9px;
-    max-width:1160px;margin:clamp(26px,3.4vw,38px) auto 0;
+  /* Liegt im selben Container wie der Zurueck-Link, deshalb sitzt die
+     linke Kante zwangslaeufig auf derselben Linie. flex-basis:100%
+     schiebt die Zeile in eine eigene Reihe. */
+  [data-rights]{flex-basis:100%;display:flex;align-items:center;
+    flex-wrap:wrap;gap:9px;
+    margin:clamp(20px,2.6vw,30px) 0 0;
     padding-top:clamp(18px,2.4vw,24px);
     border-top:1px solid rgba(255,255,255,0.10);
     font-size:12.5px;letter-spacing:0.03em;color:#7b8087}
@@ -92,14 +96,14 @@
     border:1px solid rgba(255,255,255,0.22);
     font-family:Anton,sans-serif;font-size:11.5px;letter-spacing:0.06em;
     color:#e8eaed;padding-left:0.06em;flex-shrink:0}
-  [data-rightsdot]{opacity:0.4}
+  [data-rightsdot]{opacity:0.4;margin-left:9px}
   [data-rightsbrand]{display:inline-flex;align-items:center;gap:9px}
   @media(max-width:560px){
-    /* Zwei bewusste Zeilen statt eines zufaelligen Umbruchs. Beide
-       beginnen auf derselben Kante wie der Rest der Fusszeile. */
-    [data-rights]{gap:8px;font-size:12px;margin-top:24px;padding-top:18px;
-      flex-direction:column;align-items:flex-start}
-    [data-rightsdot]{display:none}
+    /* 11px statt 12,5px: damit passt die Zeile mitsamt Trennstrich auf
+       gaengige Displays, ohne umzubrechen. */
+    [data-rights]{gap:7px;font-size:11px;letter-spacing:0.01em;
+      margin-top:22px;padding-top:18px}
+    [data-rightsdot]{margin-left:7px}
   }
 </style>
 </helmet>
@@ -462,16 +466,15 @@
         <span style="font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(15px,1.7vw,17px);letter-spacing:0.02em;line-height:1.1;color:#f5f5f6">Autolackiererei in Britz</span>
         <span style="font-size:14px;line-height:1.45;color:#9ea2a8">Haarlemer Straße 48-54 · 12359 Berlin</span>
       </div>
-    </div>
 
-    <p data-rights>
-      <span data-rightsbrand>
-        <span data-mono>JW</span>
-        <span>Smartpage © {{ jahr }}</span>
-      </span>
-      <span data-rightsdot>|</span>
-      <span>Inhalte urheberrechtlich geschützt</span>
-    </p>
+      <p data-rights>
+        <span data-rightsbrand>
+          <span data-mono>JW</span>
+          <span>Smartpage © {{ jahr }}<span data-rightsdot>|</span></span>
+        </span>
+        <span>Inhalte urheberrechtlich geschützt</span>
+      </p>
+    </div>
   </footer>
 
 </div>
