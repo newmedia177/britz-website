@@ -40,6 +40,11 @@
     [data-cookiehead]{display:none !important}
   }
   footer[data-legalfooter]{border-top:1px solid rgba(255,255,255,0.14)}
+  /* Rechtsbuendig nur, solange Link und Adresse nebeneinander stehen.
+     Sobald sie untereinander rutschen, wirkt das versetzt. */
+  @media(min-width:561px){
+    footer[data-legalfooter] [data-colophon]{text-align:right}
+  }
   @media(max-width:560px){
     footer[data-legalfooter] > div{flex-direction:column;align-items:flex-start;gap:22px}
     /* Die Linie ueber der Fusszeile laeuft von Kante zu Kante. Diese
@@ -433,7 +438,7 @@
   <footer data-legalfooter style="background:#111214;color:#f5f5f6;padding:clamp(36px,5vw,56px) clamp(18px,5vw,40px)">
     <div style="max-width:1160px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 28px">
       <a href="index.html" style="display:inline-flex;align-items:center;gap:10px;text-decoration:none;font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(18px,2.4vw,24px);letter-spacing:-0.005em;color:#f5f5f6;min-height:44px" style-hover="color:#ffce4d"><span style="font-size:20px;line-height:1">←</span>Zurück zur Startseite</a>
-      <div data-colophon style="display:flex;flex-direction:column;gap:5px;text-align:right;min-height:44px;justify-content:center">
+      <div data-colophon style="display:flex;flex-direction:column;gap:5px;min-height:44px;justify-content:center">
         <span style="font-family:Anton,sans-serif;font-weight:400;text-transform:uppercase;font-size:clamp(15px,1.7vw,17px);letter-spacing:0.02em;line-height:1.1;color:#f5f5f6">Autolackiererei Britz</span>
         <span style="font-size:14px;line-height:1.45;color:#9ea2a8">Haarlemer Straße 48 · 12359 Berlin</span>
       </div>
