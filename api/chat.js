@@ -1,12 +1,13 @@
-// api/chat.js – Alex, der KI-Assistent der Autolackiererei Britz
+// api/chat.js – Alex, der KI-Assistent der Autolackiererei in Britz
 // Vercel Serverless Function (Node 18+). Streamt die Antwort als SSE
 // im Format `data: <JSON-String>` – exakt das Protokoll des Widgets.
 //
 // Benötigte Umgebungsvariable (Vercel → Settings → Environment
 // Variables):  ANTHROPIC_API_KEY
-// Optional:    CLAUDE_MODEL (Standard: claude-fable-5)
+// Optional:    CLAUDE_MODEL (Standard: claude-sonnet-5)
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
+import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -15,6 +16,12 @@ const MAX_CHARS = 4000;      // pro Nachricht
 const MAX_IMAGES = 3;
 
 export default async function handler(req, res) {
+  // CORS: Anfragen von jeder Webseite erlauben (Widget läuft auf Kundendomain)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
+
   if (req.method !== "POST") {
     res.status(405).json({ error: "POST only" });
     return;
@@ -73,7 +80,7 @@ export default async function handler(req, res) {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL || "claude-fable-5",
+        model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
         max_tokens: 700,
         // System-Prompt + komplette Wissensbasis, mit Prompt-Caching:
         // der große Block wird gecacht und kostet ab der 2. Anfrage
@@ -106,7 +113,7 @@ export default async function handler(req, res) {
   // Anthropic-SSE parsen und nur die Text-Deltas ans Widget reichen
   const reader = upstream.body.getReader();
   const dec = new TextDecoder();
-  let buf = "", answer = "";
+  let buf = "", answer = "", zurueck = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -122,8 +129,13 @@ export default async function handler(req, res) {
           const ev = JSON.parse(payload);
           if (ev.type === "content_block_delta" &&
               ev.delta && ev.delta.type === "text_delta" && ev.delta.text) {
-            answer += ev.delta.text;
-            sseWrite(res, ev.delta.text);
+            const teil = streamTeilen(zurueck + ev.delta.text);
+            zurueck = teil.zurueck;
+            if (teil.fertig) {
+              const sauber = saeubern(teil.fertig, answer.length === 0);
+              answer += sauber;
+              sseWrite(res, sauber);
+            }
           }
         } catch (_) { /* halbe Events ignorieren */ }
       }
@@ -131,12 +143,22 @@ export default async function handler(req, res) {
   } catch (e) {
     console.error("stream error", e);
   }
+  // Zurückgehaltenen Rest noch ausgeben
+  if (zurueck) {
+    const sauber = saeubern(zurueck, answer.length === 0).replace(/\s+$/, "");
+    if (sauber) { answer += sauber; sseWrite(res, sauber); }
+  }
   res.write("data: [DONE]\n\n");
   res.end();
 
   // Wissenslücke still protokollieren (blockiert die Antwort nicht)
   const lastUser = [...messages].reverse().find(m => m.role === "user");
-  logGapIfNeeded(lastUser && lastUser.content, answer);
+  const frage = typeof (lastUser && lastUser.content) === "string"
+    ? lastUser.content : "";
+  await logGapIfNeeded(frage, answer);
+
+  // Terminanfrage an den Inhaber melden
+  await meldeTermin({ antwort: answer, kanal: "web", thema: frage });
 }
 
 // ---- Selbstlernende Schleife: erkennt, was der Assistent NICHT wusste --
@@ -150,31 +172,61 @@ const GAP_MARKERS = [
 
 export async function logGapIfNeeded(question, answer) {
   try {
-    if (!question || !answer || !process.env.UPSTASH_REDIS_REST_URL) return;
+    if (!question || !answer || !speicherUrl()) return;
     const a = answer.toLowerCase();
     if (!GAP_MARKERS.some(m => a.includes(m))) return;
-    const url = process.env.UPSTASH_REDIS_REST_URL;
-    const tok = process.env.UPSTASH_REDIS_REST_TOKEN;
-    const r = await fetch(`${url}/get/gaps`,
-      { headers: { authorization: `Bearer ${tok}` } });
-    const j = await r.json();
-    const gaps = j.result ? JSON.parse(j.result) : [];
+    const gaps = await jsonLesen("gaps", []);
     const q = question.slice(0, 300);
     const hit = gaps.find(g => g.q.toLowerCase() === q.toLowerCase());
     if (hit) { hit.n = (hit.n || 1) + 1; hit.last = new Date().toISOString().slice(0, 10); }
     else gaps.push({ q, n: 1, last: new Date().toISOString().slice(0, 10) });
     gaps.sort((x, y) => y.n - x.n);
-    await fetch(`${url}/set/gaps`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${tok}` },
-      body: JSON.stringify(gaps.slice(0, 100))
-    });
+    await jsonSchreiben("gaps", gaps.slice(0, 100));
   } catch (_) { /* Logging darf nie den Chat stören */ }
 }
 
 function sseWrite(res, text) {
   // JSON-String macht das Protokoll newline-sicher
   res.write("data: " + JSON.stringify(text) + "\n\n");
+}
+
+// ---- Stilfilter: entfernt typische KI-Zeichen ---------------------
+// Gedankenstriche als Satzverbinder und Ausrufezeichen wirken maschinell.
+// Der System-Prompt verbietet sie bereits; hier wird es zusätzlich
+// erzwungen, damit nichts durchrutscht.
+// Bindestriche ohne Leerzeichen (Mo–Do, 8–17 Uhr, Berlin-Britz)
+// bleiben unangetastet.
+export function saeubern(text, amAnfang) {
+  let s = String(text || "");
+
+  // "Wort – Wort"  ->  "Wort, Wort"   (nur mit Leerzeichen daneben)
+  s = s.replace(/[ \t]*[\u2013\u2014][ \t]*/g, (treffer) =>
+    /[ \t]/.test(treffer) ? ", " : treffer);
+
+  // Ausrufezeichen -> Punkt
+  s = s.replace(/!+/g, ".");
+
+  // Aufräumen, falls durch die Ersetzung Doppeltes entsteht
+  s = s.replace(/,\s*,/g, ",")
+       .replace(/[ \t]+,/g, ",")
+       .replace(/,\s*([.?])/g, "$1")
+       .replace(/([.?])\s*,\s*/g, "$1 ");
+
+  // Am Satzanfang kein führendes Komma
+  if (amAnfang) s = s.replace(/^\s*,\s*/, "");
+
+  return s;
+}
+
+// Teilt einen Stream-Abschnitt so, dass Ersetzungen nie an einer
+// Chunk-Grenze zerrissen werden: alles, was auf Leerzeichen oder einen
+// Gedankenstrich endet, wird bis zum nächsten Abschnitt zurückgehalten.
+function streamTeilen(rohtext) {
+  const rest = (rohtext.match(/[\s\u2013\u2014]+$/) || [""])[0];
+  return {
+    fertig: rest ? rohtext.slice(0, rohtext.length - rest.length) : rohtext,
+    zurueck: rest
+  };
 }
 function sseError(res, msg) {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -185,12 +237,8 @@ function sseError(res, msg) {
 
 // ---- Vom Inhaber per WhatsApp gemerkte Hinweise (Lern-Modus) ------
 async function ownerNotesBlock() {
-  if (!process.env.UPSTASH_REDIS_REST_URL) return "";
   try {
-    const r = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/get/notes`,
-      { headers: { authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` } });
-    const j = await r.json();
-    const notes = j.result ? JSON.parse(j.result) : [];
+    const notes = await jsonLesen("notes", []);
     if (!notes.length) return "";
     return "\n\nAktuelle Hinweise vom Inhaber (verbindlich; überschreiben " +
       "bei Widerspruch die Wissensbasis):\n" +
@@ -274,7 +322,7 @@ function terminFenster(t) {
   return `${fmt(von)}–${fmt(bis)} Uhr`;
 }
 
-function zeitKontext() {
+export function zeitKontext() {
   const jetzt = new Date();
   const t = berlinTeile(jetzt);
   const uhrzeit = `${String(t.stunde).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;

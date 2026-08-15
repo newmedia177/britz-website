@@ -363,7 +363,7 @@
 '</button>',
 '',
 '<div class="alb-panel" id="albPanel" role="dialog"',
-'     aria-label="Service-Chat der Autolackiererei Britz">',
+'     aria-label="Service-Chat der Autolackiererei in Britz">',
 '  <button class="alb-close" id="albClose" aria-label="Chat schlie\u00dfen">\u00d7</button>',
 '  <div class="alb-head" id="albHead">',
 '    <span class="alb-avatar" data-avatar>',
@@ -372,7 +372,7 @@
 '    </span>',
 '    <div class="t">',
 '      <b id="albName">Service-Team</b>',
-'      <span id="albRole">Autolackiererei Britz \u00b7 24/7 erreichbar</span>',
+'      <span id="albRole">Autolackiererei in Britz \u00b7 24/7 erreichbar</span>',
 '    </div>',
 '    <span class="alb-pill" id="albStatus"><i></i>Online</span>',
 '  </div>',
@@ -615,8 +615,11 @@
        sauberen Text anzeigen und eine Kalender-Karte anhaengen. */
     function handleTermin(node, txt) {
       var re = /\[\[TERMIN\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
+      // Der Kontakt-Marker ist nur fuer das Team und wird nie angezeigt
+      var reK = /\[\[KONTAKT\|[^\]]*\]\]/;
       var m = txt.match(re);
-      var clean = txt.replace(re, "").replace(/\s+$/, "").trim();
+      var clean = txt.replace(re, "").replace(reK, "")
+                     .replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "").trim();
       node.textContent = clean;
       if (!m) return clean;
 

@@ -7,12 +7,16 @@ Alles Neue kommt vom Inhaber oder von euch, er sammelt nur zu.
 ## Ebene 1 – Sofort: Lern-Modus per WhatsApp (Inhaber)
 Der Inhaber schreibt dem Assistenten wie einem Mitarbeiter. Nur
 Nummern aus OWNER_NUMBERS dürfen das.
-- "Merk dir: Scheibentausch übernimmt immer die Teilkasko."
+- "Merk dir: Für Leasingrückgaben brauchen wir das Rückgabeprotokoll."
   -> gilt sofort in ALLEN Kundengesprächen (Web + WhatsApp)
 - "Zeig Notizen"  -> alle gemerkten Hinweise, nummeriert
 - "Vergiss 2"     -> Hinweis 2 löschen
 - "Zeig Lücken"   -> Fragen, die der Assistent NICHT beantworten konnte
 - "Lücken leeren" -> Liste zurücksetzen
+- "Termine"       -> offene Terminanfragen mit Nummer
+- "Termin 3 passt" -> Rückmeldung an den Kunden von Anfrage 3
+- "Lösche Termin 3" / "Lösche alle Termine"
+- "Status"        -> Selbsttest des Speichers
 - "Hilfe"         -> Befehlsübersicht
 Wirkung: Sekunden. Kein Deployment nötig.
 
