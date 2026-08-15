@@ -306,11 +306,23 @@
 '  .alb-termin span { display: block; font-size: 12.5px; opacity: .88; }',
 '  .alb-termin i { display: block; font-style: normal; font-size: 11.5px;',
 '    opacity: .62; margin: 6px 0 10px; }',
+'  .alb-terminlbl { display: block; font-style: normal; font-size: 11px;',
+'    font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;',
+'    opacity: .55; margin: 0 0 8px; }',
+'  .alb-terminbtns { display: flex; flex-wrap: wrap; gap: 7px; }',
 '  .alb-termin button { border: 0; cursor: pointer; font: inherit;',
-'    font-size: 12.5px; font-weight: 600; padding: 8px 14px;',
+'    font-size: 12.5px; font-weight: 600; padding: 8px 15px;',
 '    border-radius: 999px; background: var(--alb-gold, #c9a227);',
 '    color: #16181c; transition: filter .15s ease; }',
 '  .alb-termin button:hover { filter: brightness(1.08); }',
+'',
+'  /* Links im Chat: dezent, beim Ueberfahren deutlicher */',
+'  .alb-link { color: inherit; text-decoration: underline;',
+'    text-decoration-color: rgba(201,162,39,.55);',
+'    text-underline-offset: 3px; text-decoration-thickness: 1.5px;',
+'    transition: text-decoration-color .18s ease, color .18s ease; }',
+'  .alb-link:hover { color: var(--alb-gold, #c9a227);',
+'    text-decoration-color: currentColor; }',
 '',
 '  /* ================= Dark-Mode ==============================',
 '     Die Seite schaltet ueber html[data-theme="dark"]. Das Widget',
@@ -347,6 +359,7 @@
 '  html[data-theme="dark"] .alb-legal { color: #7c828b; }',
 '  html[data-theme="dark"] .alb-previews img { border-color: #2a3038; }',
 '  html[data-theme="dark"] .alb-typing i { background: #6c737c; }',
+'  html[data-theme="dark"] .alb-link:hover { color: #e0b83a; }',
 '  html[data-theme="dark"] .alb-launch .hint {',
 '    background: #1a1f26; color: #e8eaed; }'
   ].join('\n');
@@ -613,6 +626,52 @@
 
     /* Termin-Marker [[TERMIN|Datum|Titel|Adresse]] aus dem Text holen,
        sauberen Text anzeigen und eine Kalender-Karte anhaengen. */
+    /* Links und Rufnummern anklickbar machen.
+       Bewusst ueber echte DOM-Knoten statt innerHTML: so kann aus einer
+       Antwort niemals Markup entstehen, das der Browser ausfuehrt. */
+    function linkify(node, text) {
+      node.textContent = "";
+      var re = /([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|(?:https?:\/\/|www\.)[^\s<>"']+|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:de|com|berlin|net|org|eu)(?:\/[^\s<>"']*)?|0\d[\d\s\/()-]{7,}\d)/gi;
+      var pos = 0, m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > pos) node.appendChild(
+          document.createTextNode(text.slice(pos, m.index)));
+        var roh = m[0], nach = "";
+        // Satzzeichen am Ende gehoeren nicht zum Link
+        while (/[.,;:!?)]$/.test(roh)) { nach = roh.slice(-1) + nach; roh = roh.slice(0, -1); }
+        var a = document.createElement("a");
+        a.className = "alb-link";
+        a.textContent = roh;
+        if (roh.indexOf("@") > 0) {
+          a.href = "mailto:" + roh;
+        } else if (/^0\d/.test(roh)) {
+          a.href = "tel:" + roh.replace(/[^\d+]/g, "");
+        } else {
+          a.href = /^https?:\/\//.test(roh) ? roh : "https://" + roh;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+        }
+        node.appendChild(a);
+        if (nach) node.appendChild(document.createTextNode(nach));
+        pos = m.index + m[0].length;
+      }
+      if (pos < text.length) node.appendChild(
+        document.createTextNode(text.slice(pos)));
+    }
+
+    /* Die Uhrzeit im Marker ist immer Berliner Ortszeit. Ohne diese
+       Umrechnung wuerde sie in der Zeitzone des Kundengeraets gelesen -
+       ein Handy auf einer anderen Zone bekaeme den falschen Termin. */
+    function berlinZeit(iso) {
+      var m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+      if (!m) return null;
+      var alsUtc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+      var probe = new Date(alsUtc);
+      var inBerlin = new Date(probe.toLocaleString("en-US", { timeZone: "Europe/Berlin" }));
+      var inUtc = new Date(probe.toLocaleString("en-US", { timeZone: "UTC" }));
+      return new Date(alsUtc - (inBerlin - inUtc));
+    }
+
     function handleTermin(node, txt) {
       var re = /\[\[TERMIN\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
       // Der Kontakt-Marker ist nur fuer das Team und wird nie angezeigt
@@ -620,45 +679,107 @@
       var m = txt.match(re);
       var clean = txt.replace(re, "").replace(reK, "")
                      .replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "").trim();
-      node.textContent = clean;
+      linkify(node, clean);
       if (!m) return clean;
 
       var isoStr = m[1].trim(), titel = m[2].trim(), adr = m[3].trim();
-      var d = new Date(isoStr);
+      var d = berlinZeit(isoStr);
+      if (!d) return clean;
       if (isNaN(d.getTime())) return clean;
 
       var card = document.createElement("div");
       card.className = "alb-termin";
       var when = d.toLocaleDateString("de-DE", {
-        weekday: "long", day: "numeric", month: "long"
+        weekday: "long", day: "numeric", month: "long",
+        timeZone: "Europe/Berlin"
       }) + ", " + d.toLocaleTimeString("de-DE", {
-        hour: "2-digit", minute: "2-digit"
+        hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin"
       }) + " Uhr";
       var b = document.createElement("b"); b.textContent = titel;
       var sp = document.createElement("span"); sp.textContent = when + " \u00b7 " + adr;
       var note = document.createElement("i");
       note.textContent = "Wunschtermin \u2013 wird vom Team noch best\u00e4tigt";
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Zum Kalender hinzuf\u00fcgen";
-      btn.onclick = function () {
-        function fmt(x) {
-          return x.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-        }
-        var end = new Date(d.getTime() + 60 * 60 * 1000);
-        var ics = [
-          "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT",
-          "DTSTART:" + fmt(d), "DTEND:" + fmt(end),
-          "SUMMARY:" + titel, "LOCATION:" + adr,
-          "END:VEVENT", "END:VCALENDAR"
+      // Kalender-Auswahl: Google braucht eine Adresse im Netz,
+      // Apple und Outlook oeffnen eine .ics-Datei nativ.
+      var ende = new Date(d.getTime() + 60 * 60 * 1000);
+
+      function utc(x) {
+        return x.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+      }
+      // Pflicht nach RFC 5545: Komma, Semikolon und Backslash maskieren.
+      // Ohne das zerlegen manche Kalender die Adresse an jedem Komma.
+      function esc(t) {
+        return String(t).replace(/\\/g, "\\\\")
+                        .replace(/;/g, "\\;")
+                        .replace(/,/g, "\\,")
+                        .replace(/\n/g, "\\n");
+      }
+
+      function icsDatei() {
+        var uid = "britz-" + d.getTime() + "@autolackiererei-britz.de";
+        return [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//Autolackiererei in Britz//Termin//DE",
+          "CALSCALE:GREGORIAN",
+          "METHOD:PUBLISH",
+          "BEGIN:VEVENT",
+          "UID:" + uid,
+          "DTSTAMP:" + utc(new Date()),
+          "DTSTART:" + utc(d),
+          "DTEND:" + utc(ende),
+          "SUMMARY:" + esc(titel),
+          "LOCATION:" + esc(adr),
+          "DESCRIPTION:" + esc("Wunschtermin, wird vom Team noch bestätigt. " +
+                               "Rückfragen: 030 607 97 930"),
+          "END:VEVENT",
+          "END:VCALENDAR"
         ].join("\r\n");
+      }
+
+      function ladeIcs() {
         var a = document.createElement("a");
-        a.href = "data:text/calendar;charset=utf-8," + encodeURIComponent(ics);
-        a.download = "termin.ics";
+        a.href = "data:text/calendar;charset=utf-8," +
+                 encodeURIComponent(icsDatei());
+        a.download = "termin-autolackiererei-britz.ics";
+        document.body.appendChild(a);
         a.click();
-      };
+        a.remove();
+      }
+
+      function googleLink() {
+        return "https://calendar.google.com/calendar/render?action=TEMPLATE" +
+          "&text=" + encodeURIComponent(titel) +
+          "&dates=" + utc(d) + "/" + utc(ende) +
+          "&location=" + encodeURIComponent(adr) +
+          "&details=" + encodeURIComponent(
+            "Wunschtermin, wird vom Team noch bestätigt. " +
+            "Rückfragen: 030 607 97 930");
+      }
+
+      var label = document.createElement("em");
+      label.className = "alb-terminlbl";
+      label.textContent = "Zum Kalender hinzuf\u00fcgen";
+
+      var reihe = document.createElement("div");
+      reihe.className = "alb-terminbtns";
+
+      function knopf(text, aktion) {
+        var k = document.createElement("button");
+        k.type = "button";
+        k.textContent = text;
+        k.onclick = aktion;
+        reihe.appendChild(k);
+      }
+      knopf("Google", function () {
+        window.open(googleLink(), "_blank", "noopener");
+      });
+      knopf("Apple", ladeIcs);
+      knopf("Outlook", ladeIcs);
+
       card.appendChild(b); card.appendChild(sp);
-      card.appendChild(note); card.appendChild(btn);
+      card.appendChild(note);
+      card.appendChild(label); card.appendChild(reihe);
       node.appendChild(card);
       return clean;
     }
