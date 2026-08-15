@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="format-detection" content="telephone=no,address=no,date=no,email=no">
-<script src="assets/js/support.js?v=20260815d"></script>
+<script src="assets/js/support.js?v=20260815e"></script>
 </head>
 <body>
 <x-dc>
@@ -26,8 +26,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="assets/js/image-slot.js?v=20260815d"></script>
-<script src="assets/js/britz-chat-widget.js?v=20260815d"></script>
+<script src="assets/js/image-slot.js?v=20260815e"></script>
+<script src="assets/js/britz-chat-widget.js?v=20260815e"></script>
 <style>
   *{box-sizing:border-box}
   html{scroll-behavior:smooth;scroll-padding-top:84px}
@@ -41,6 +41,9 @@
      schaltet den Umbruch ein und muss deshalb spaeter kommen. */
   [data-mobbr]{display:none}
   /* ---- Kontaktwege: einfahrende Linie wie im Footer ---------------- */
+  /* Ohne das dehnt sich die Beschriftung auf die volle Rasterspalte
+     und die Linie waere breiter als die Rufnummer. */
+  [data-kwlbl]{justify-self:start;width:max-content;max-width:100%}
   [data-kwlbl]::after{content:'';position:absolute;left:0;right:0;bottom:-4px;
     height:2px;border-radius:2px;background:#f2ab00;
     transform:scaleX(0);transform-origin:left center;
