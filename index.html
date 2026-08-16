@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="format-detection" content="telephone=no,address=no,date=no,email=no">
-<script src="assets/js/support.js?v=20260815j"></script>
+<script src="assets/js/support.js?v=20260815k"></script>
 </head>
 <body>
 <x-dc>
@@ -26,8 +26,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="assets/js/image-slot.js?v=20260815j"></script>
-<script src="assets/js/britz-chat-widget.js?v=20260815j"></script>
+<script src="assets/js/image-slot.js?v=20260815k"></script>
+<script src="assets/js/britz-chat-widget.js?v=20260815k"></script>
 <style>
   *{box-sizing:border-box}
   html{scroll-behavior:smooth;scroll-padding-top:84px}
@@ -1537,7 +1537,16 @@ class Component extends DCLogic {
 
 
 
-<!-- Smartpage-Signatur - unveraendert uebernommen -->
+<!-- Smartpage-Signatur - unveraendert uebernommen.
+     Der Anker darum haelt sie ueber dem fest stehenden Footer;
+     die Datei selbst bringt keine Verankerung mit. -->
+<style>
+  .sp-anker{position:fixed;right:24px;bottom:24px;z-index:99999}
+  @media(max-width:1000px){
+    .sp-anker{right:18px;bottom:calc(14px + env(safe-area-inset-bottom))}
+  }
+</style>
+<div class="sp-anker">
 <style>
 /* --- Animationen der großen Blase --- */
 @keyframes smOrbit{to{transform:rotate(360deg)}}
@@ -1683,6 +1692,7 @@ class Component extends DCLogic {
   });
 })();
 </script>
+</div>
 
 </body>
 </html>
