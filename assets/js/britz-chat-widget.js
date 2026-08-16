@@ -141,6 +141,9 @@
 '    background: var(--alb-green); }',
 '  .alb-head .t b { display: block; font: 700 15.5px/1.2 var(--alb-fd);',
 '    letter-spacing: .02em; }',
+'  .alb-hinweis { text-align: center; font-size: 11.5px; line-height: 1.55;',
+'    color: #8a8377; margin: 2px 12px 12px; }',
+'  html[data-theme="dark"] .alb-hinweis { color: #8f8b83; }',
 '  .alb-head .t span { font-size: 12px; opacity: .65; }',
 '  .alb-pill { display: inline-flex; align-items: center; gap: 6px;',
 '    font: 600 11px/1 var(--alb-fd); letter-spacing: .05em;',
@@ -385,7 +388,7 @@
 '    </span>',
 '    <div class="t">',
 '      <b id="albName">Service-Team</b>',
-'      <span id="albRole">Autolackiererei in Britz \u00b7 24/7 erreichbar</span>',
+'      <span id="albRole">KI-Assistent der Autolackiererei in Britz</span>',
 '    </div>',
 '    <span class="alb-pill" id="albStatus"><i></i>Online</span>',
 '  </div>',
@@ -549,7 +552,18 @@
       if (head) head.classList.add("has-agent");
       $("albName").textContent = CONFIG.assistantName;
       var role = $("albRole");
-      if (role) role.textContent = "Service-Team \u00b7 antwortet meist sofort";
+      if (role) role.textContent = "KI-Assistent der Autolackiererei in Britz";
+      // Kennzeichnung nach EU AI Act, Art. 50: klar, vor der eigentlichen
+      // Unterhaltung. Positiv formuliert - entscheidend ist, dass am Ende
+      // ein Mensch mitliest und freigibt (Termine bestaetigt das Team).
+      if (!$("albHinweis")) {
+        var hw = document.createElement("div");
+        hw.className = "alb-hinweis";
+        hw.id = "albHinweis";
+        hw.innerHTML = "Einsch\u00e4tzungen und Termine gehen immer an das Team \u2014 " +
+                       "entschieden wird in der Werkstatt.";
+        log.appendChild(hw);
+      }
     }
 
     function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }

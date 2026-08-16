@@ -214,7 +214,23 @@ async function verarbeite(req) {
           "den er dir nicht selbst genannt hat.") +
           "\n\nKanal: WhatsApp. Schreibe wie eine echte Person im Chat: " +
           "höchstens zwei bis drei kurze Sätze, keine Aufzählungen, " +
-          "keine Zwischenüberschriften, kein Fließtext-Block." + notesBlock
+          "keine Zwischenüberschriften, kein Fließtext-Block." +
+          // Kennzeichnung nach EU AI Act, Art. 50: Auf WhatsApp gibt es
+          // keine Kopfzeile, deshalb einmalig im ersten Satz - nicht als
+          // Warnhinweis, sondern als das, was es ist: schnelle Vorarbeit,
+          // entschieden wird in der Werkstatt.
+          (chef || messages.length > 2 ? "" :
+          "\n\nDies ist die ERSTE Nachricht dieses Kunden. Ordne dich " +
+          "deshalb einmal kurz und beiläufig ein — in EINEM Halbsatz, " +
+          "mitten im Gespräch, nie als Hinweisblock und nie entschuldigend. " +
+          "Der Gedanke: Du bist der KI-Assistent des Betriebs, machst die " +
+          "Vorarbeit rund um die Uhr, und Einschätzung wie Termin gehen " +
+          "anschließend an die Werkstatt, die entscheidet. Beispiel: " +
+          "\"Hier ist Alex, der KI-Assistent der Autolackiererei in Britz — " +
+          "ich mache die Vorarbeit, entschieden wird dann in der Werkstatt. " +
+          "Schicken Sie mir gern ein Foto vom Schaden.\" Formuliere es " +
+          "selbst, nicht wörtlich abschreiben. Danach normal weiter und " +
+          "nie wiederholen.") + notesBlock
       }],
       messages
     })
