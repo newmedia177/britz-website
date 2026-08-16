@@ -1581,12 +1581,26 @@ class Component extends DCLogic {
     return "v. " + jahr + "." + (kw < 10 ? "0" + kw : kw) + "." + v;
   }
   function setzen() {
-    var el = document.querySelector("[data-version]");
-    if (el) el.textContent = stand(new Date());
+    // Das Design-Framework rendert den Footer neu und blendet die
+    // Vorlage aus. Dadurch gibt es zeitweise zwei [data-version]-Felder.
+    // Wir fuellen deshalb ALLE - und nur, wenn sich der Text aendert,
+    // damit der Beobachter unten keine Endlosschleife ausloest.
+    var txt = stand(new Date());
+    var els = document.querySelectorAll("[data-version]");
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].textContent !== txt) els[i].textContent = txt;
+    }
   }
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", setzen);
   else setzen();
+  // Nach dem Neu-Rendern erscheint das sichtbare Feld erst spaeter und
+  // wird bei jedem Wechsel (z. B. Hell/Dunkel) neu erzeugt. Der
+  // Beobachter fuellt es dann jedes Mal nach.
+  if (window.MutationObserver) {
+    var mo = new MutationObserver(function () { setzen(); });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
 })();
 </script>
 
