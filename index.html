@@ -1764,5 +1764,99 @@ class Component extends DCLogic {
 </script>
 </div>
 
+<!-- Countdown-Ebene "Smartpage geht online". Eigene Ebene ganz oben,
+     ausserhalb von <x-dc>, daher vom Framework-Neuaufbau unberuehrt.
+     Schaltet sich am Zieltermin selbst ab. Startet versteckt (hidden)
+     und wird nur per Skript gezeigt -> faellt "offen" aus: sollte das
+     Skript versagen, ist die Seite sichtbar statt blockiert. -->
+<style>
+  .cdw-overlay{position:fixed;inset:0;z-index:2147483000;background:#04050b;overflow:hidden;
+    opacity:1;transition:opacity 1.1s ease}
+  .cdw-media{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:max(100vw,133.34vh);aspect-ratio:4/3;container-type:size;
+    transition:transform 1.1s ease,filter 1.1s ease}
+  .cdw-bg{width:100%;height:100%;object-fit:cover;display:block}
+  .cdw-clock{position:absolute;left:50%;top:48.5%;transform:translate(-50%,-50%);
+    text-align:center;font-family:'DM Sans',system-ui,sans-serif;font-weight:300;
+    font-size:3.7cqw;line-height:1;color:#f3efe6;font-variant-numeric:tabular-nums;
+    letter-spacing:.06em;white-space:nowrap}
+  .cdw-wm{position:absolute;top:clamp(20px,5vh,38px);left:0;right:0;text-align:center;z-index:2;
+    font-family:'DM Sans',system-ui,sans-serif;font-size:13.5px;font-weight:500;
+    letter-spacing:.24em;color:#e7e4d8;opacity:.85}
+  .cdw-wm span{color:#e6a92a;font-weight:400}
+  .cdw-bottom{position:absolute;bottom:clamp(26px,8vh,54px);left:0;right:0;text-align:center;z-index:2;
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+    font-family:'DM Sans',system-ui,sans-serif}
+  .cdw-rule{width:40px;height:1px;background:#e6a92a;opacity:.8}
+  .cdw-headline{font-size:clamp(15px,2.3vw,20px);font-weight:400;letter-spacing:.06em;color:#eae5d9}
+  .cdw-when{font-size:12px;color:#8b909c;letter-spacing:.08em}
+  .cdw-overlay.cdw-ending{opacity:0;pointer-events:none}
+  .cdw-overlay.cdw-ending .cdw-media{transform:translate(-50%,-50%) scale(1.06);filter:brightness(1.6)}
+</style>
+<div class="cdw-overlay" id="cdw-overlay" hidden aria-label="Countdown">
+  <div class="cdw-media">
+    <video class="cdw-bg" muted loop playsinline preload="none"></video>
+    <div class="cdw-clock" id="cdw-clock">--:--:--</div>
+  </div>
+  <div class="cdw-wm">Autolackiererei <span>in</span> Britz</div>
+  <div class="cdw-bottom">
+    <div class="cdw-rule"></div>
+    <div class="cdw-headline">Smartpage geht online</div>
+    <div class="cdw-when">Montag, 17.&nbsp;August &middot; 18:00&nbsp;Uhr</div>
+  </div>
+</div>
+<script>
+(function () {
+  var target = new Date("2026-08-17T18:00:00+02:00").getTime();
+  var box = document.getElementById("cdw-overlay");
+  if (!box) return;
+  if (Date.now() >= target) { box.parentNode && box.parentNode.removeChild(box); return; }
+
+  var clock = document.getElementById("cdw-clock");
+  var vid = box.querySelector("video");
+  var root = document.documentElement;
+  var prevRootOverflow = root.style.overflow, prevBodyOverflow = document.body.style.overflow;
+
+  box.hidden = false;
+  root.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
+  // Video erst JETZT laden (nur solange der Countdown laeuft). Nach dem
+  // Termin wird die Ebene vorher entfernt -> es wird nichts geladen.
+  if (vid) {
+    vid.poster = "assets/img/ani-alex-poster.jpg";
+    [["assets/video/ani-alex.webm","video/webm"],
+     ["assets/video/ani-alex.mp4","video/mp4"]].forEach(function (q) {
+      var so = document.createElement("source"); so.src = q[0]; so.type = q[1];
+      vid.appendChild(so);
+    });
+    vid.load();
+    var p = vid.play(); if (p && p.catch) p.catch(function(){});
+  }
+
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function draw(){
+    var s = Math.floor((target - Date.now())/1000);
+    if (s <= 0){ clock.textContent = "00:00:00"; ende(); return; }
+    var d = Math.floor(s/86400); s -= d*86400;
+    var h = Math.floor(s/3600); s -= h*3600;
+    var m = Math.floor(s/60); var sec = s - m*60;
+    clock.textContent = (d>0 ? d+"d " : "") + pad(h)+":"+pad(m)+":"+pad(sec);
+  }
+  var iv = setInterval(draw, 1000); draw();
+
+  var geschaltet = false;
+  function ende(){
+    if (geschaltet) return; geschaltet = true;
+    clearInterval(iv);
+    box.classList.add("cdw-ending");
+    root.style.overflow = prevRootOverflow;
+    document.body.style.overflow = prevBodyOverflow;
+    setTimeout(function(){ box.parentNode && box.parentNode.removeChild(box); }, 1200);
+  }
+  // Falls die Seite bis zum Zieltermin offen bleibt: exakt dann abschalten.
+  setTimeout(ende, Math.max(0, target - Date.now()));
+})();
+</script>
+
 </body>
 </html>
