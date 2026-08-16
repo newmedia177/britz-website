@@ -322,16 +322,80 @@ function terminFenster(t) {
   return `${fmt(von)}–${fmt(bis)} Uhr`;
 }
 
+// Kleine Helfer für die Lagebeschreibung
+function feiertagVor(t) { return istFeiertag(t); }
+
+// Nächster Tag, an dem tatsächlich geöffnet ist — berücksichtigt Wochenende
+// und Feiertage. Rät nicht "morgen", sondern rechnet nach.
+function naechsteOeffnung(jetzt, abMorgen) {
+  for (let i = abMorgen ? 1 : 0; i < 14; i++) {
+    const tt = berlinTeile(new Date(jetzt.getTime() + i * 86400000));
+    if (!OEFFNUNG[tt.wochentag] || istFeiertag(tt)) continue;
+    const label = i === 0 ? "heute" : (i === 1 ? "morgen" : "am " + tt.wochentagName);
+    return `${label} ab ${OEFFNUNG[tt.wochentag][0]} Uhr`;
+  }
+  return "in den nächsten Tagen";
+}
+function offenJetzt(t, feiertag) {
+  const oh = OEFFNUNG[t.wochentag];
+  if (!oh || feiertag) return false;
+  const h = t.stunde + t.minute / 60;
+  return h >= oh[0] && h < oh[1];
+}
+// Ist heute noch Öffnungszeit übrig?
+function offenSpaeter(t) {
+  const oh = OEFFNUNG[t.wochentag];
+  if (!oh) return false;
+  return (t.stunde + t.minute / 60) < oh[1];
+}
+
 export function zeitKontext() {
   const jetzt = new Date();
   const t = berlinTeile(jetzt);
   const uhrzeit = `${String(t.stunde).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
 
+  // Begrüßung nach Tageszeit UND Jahreszeit. Gängige Konvention im Deutschen:
+  // Abend ab 18 Uhr (Sommerzeit) bzw. ab 17 Uhr (Winterzeit) — im Sommer ist
+  // es länger hell, "Guten Abend" um 17 Uhr wirkt dort verfrüht.
+  const sommerzeit = t.monat >= 4 && t.monat <= 9;
+  const abendAb = sommerzeit ? 18 : 17;
   let gruss;
-  if (t.stunde < 5) gruss = "Guten Abend";
+  if (t.stunde < 5) gruss = "Guten Abend";           // tiefe Nacht
   else if (t.stunde < 11) gruss = "Guten Morgen";
-  else if (t.stunde < 18) gruss = "Guten Tag";
+  else if (t.stunde < abendAb) gruss = "Guten Tag";
   else gruss = "Guten Abend";
+
+  // Passender Abschied — richtet sich nach Wochentag und Uhrzeit.
+  // "Gute Nacht" ist im Deutschen KEIN Gruß, nur ein Abschied.
+  const wt = t.wochentag;
+  let abschied;
+  if (t.stunde >= 22 || t.stunde < 5) abschied = "noch eine gute Nacht";
+  else if (wt === 0) abschied = "noch einen schönen Sonntag";
+  else if (wt === 6) abschied = "noch ein schönes Wochenende";
+  else if (wt === 5 && t.stunde >= 12) abschied = "ein schönes Wochenende";
+  else if (t.stunde >= abendAb) abschied = "noch einen schönen Abend";
+  else if (t.stunde < 11) abschied = "noch einen guten Start in den Tag";
+  else abschied = "noch einen schönen Tag";
+
+  // Wochenend- und Feierabend-Lage, damit Alex die Situation richtig einordnet.
+  const istOffen = offenJetzt(t, feiertagVor(t));
+  const naechste = naechsteOeffnung(jetzt, !offenSpaeter(t) || !!feiertagVor(t));
+  let lage;
+  if (istOffen) {
+    lage = "Das Team ist gerade in der Werkstatt erreichbar.";
+  } else if (feiertagVor(t)) {
+    lage = `Feiertag — geschlossen. Wieder geöffnet ${naechste}.`;
+  } else if (wt === 0) {
+    lage = `Es ist Sonntag, die Werkstatt ist zu. Wieder geöffnet ${naechste}.`;
+  } else if (wt === 6) {
+    lage = `Es ist Samstag, Wochenende. Wieder geöffnet ${naechste}.`;
+  } else if (wt === 5) {
+    lage = `Freitagnachmittag, für diese Woche ist Feierabend. Wieder geöffnet ${naechste}.`;
+  } else if (t.stunde < 8) {
+    lage = `Noch vor Öffnung — das Team ist ${naechste} da.`;
+  } else {
+    lage = `Feierabend — das Team ist ${naechste} wieder da.`;
+  }
 
   const feiertagHeute = istFeiertag(t);
   const oh = OEFFNUNG[t.wochentag];
@@ -354,16 +418,24 @@ export function zeitKontext() {
     tage.push(`${label} (${tt.tag}.${tt.monat}.): ${fenster}`);
   }
 
-  const feiertagsHinweis = feiertagHeute
-    ? `Heute ist ${feiertagHeute} – die Werkstatt ist geschlossen. `
-    : "";
+  const feiertagsHinweis = feiertagHeute ? `Heute ist ${feiertagHeute}. ` : "";
 
   return "Heute ist " + t.wochentagName + ", " + t.tag + "." + t.monat + "." +
     t.jahr + ", aktuell " + uhrzeit + " Uhr (Berlin). " + feiertagsHinweis +
-    (offen ? "Die Werkstatt hat gerade geöffnet. "
-           : "Die Werkstatt hat gerade geschlossen. ") +
-    "Passende Begrüßung: \"" + gruss + "\". Spiegle eine unpassende " +
-    "Begrüßung des Kunden nicht, grüße selbst passend zurück.\n\n" +
+    lage + "\n\n" +
+    "TON UND ZEITGEFÜHL:\n" +
+    "- Passende Begrüßung wäre \"" + gruss + "\". Spiegle eine unpassende " +
+    "Begrüßung des Kunden nicht, grüße selbst passend zurück. Begrüße nur " +
+    "zu Beginn eines Gesprächs, nicht in jeder Nachricht.\n" +
+    "- Wenn ein Gespräch zu Ende geht, verabschiede dich passend, z. B. " +
+    "\"" + abschied + "\". Nicht erzwingen, nur wenn es natürlich wirkt.\n" +
+    "- Am Wochenende oder nach Feierabend: sag ruhig, dass das Team gerade " +
+    "nicht da ist, aber bleib hilfsbereit — du kannst den Schaden trotzdem " +
+    "einschätzen, Fragen beantworten und einen Termin vormerken. Formuliere " +
+    "das als Angebot, nicht als Absage.\n" +
+    "- Schreib wie ein Mensch am Tresen: kurze Sätze, natürliche Sprache, " +
+    "kein Behördendeutsch, keine Textbausteine, keine Aufzählungen ohne Not. " +
+    "Wiederhole nicht bei jeder Antwort Öffnungszeiten oder Standardsätze.\n\n" +
     "TERMINE – verbindliche Regeln:\n" +
     "- Samstag und Sonntag ist IMMER geschlossen, ebenso an Berliner " +
     "Feiertagen. Schlage solche Tage niemals vor.\n" +
