@@ -12,6 +12,10 @@
 <title>Autolackiererei in Britz – Meisterbetrieb für Lackierung &amp; Unfallinstandsetzung in Berlin</title>
 <meta name="description" content="Autolackierung, Unfallinstandsetzung und Smart Repair vom Meisterbetrieb in Berlin-Britz. Mit Abschleppservice, Ersatzwagen und Versicherungsabwicklung – seit über 20 Jahren.">
 <link rel="canonical" href="https://www.autolackiererei-britz.de/">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/img/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/img/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/img/apple-touch-icon.png">
 <link rel="manifest" href="site.webmanifest">
 <meta name="robots" content="index,follow,max-image-preview:large">
 <meta name="theme-color" content="#f7f3ec">
@@ -1855,6 +1859,196 @@ class Component extends DCLogic {
   }
   // Falls die Seite bis zum Zieltermin offen bleibt: exakt dann abschalten.
   setTimeout(ende, Math.max(0, target - Date.now()));
+})();
+</script>
+
+<!-- Einwilligung + Reichweitenmessung.
+     Analytics laedt ausschliesslich nach ausdruecklicher Zustimmung.
+     Voreinstellung ist "denied" (Google Consent Mode v2). -->
+<style>
+  .cc-karte{position:fixed;left:clamp(14px,3vw,28px);bottom:clamp(14px,3vw,28px);z-index:2147482000;
+    width:min(420px,calc(100vw - 28px));background:#211d17;color:#eae5d9;border-radius:18px;
+    box-shadow:0 18px 50px rgba(0,0,0,.34);font-family:'DM Sans',system-ui,sans-serif;
+    opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .5s ease;
+    overflow:hidden}
+  .cc-karte.cc-da{opacity:1;transform:none}
+  .cc-karte[hidden]{display:none}
+  .cc-linie{height:2px;background:#f2ab00}
+  .cc-innen{padding:22px 22px 18px}
+  .cc-titel{font-size:17px;font-weight:500;letter-spacing:.01em;margin:0 0 8px;color:#f6f2e9}
+  .cc-text{font-size:14px;line-height:1.6;color:#b8b2a6;margin:0}
+  .cc-text a{color:#f2ab00;text-decoration:none;border-bottom:1px solid rgba(242,171,0,.35)}
+  .cc-text a:hover{border-bottom-color:#f2ab00}
+  .cc-knoepfe{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}
+  .cc-btn{flex:1 1 auto;min-width:120px;font-family:inherit;font-size:14px;font-weight:500;
+    padding:11px 16px;border-radius:11px;cursor:pointer;border:1px solid transparent;
+    transition:background .18s ease,border-color .18s ease,color .18s ease}
+  .cc-ja{background:#f2ab00;color:#211d17}
+  .cc-ja:hover{background:#ffc02e}
+  .cc-nein{background:transparent;color:#eae5d9;border-color:rgba(234,229,217,.28)}
+  .cc-nein:hover{border-color:rgba(234,229,217,.6)}
+  .cc-mehr{flex:0 0 auto;min-width:0;background:none;border:0;color:#8e887d;font-size:13px;
+    padding:11px 4px;cursor:pointer;font-family:inherit;text-decoration:underline;
+    text-underline-offset:3px}
+  .cc-mehr:hover{color:#c9c3b6}
+  .cc-detail{border-top:1px solid rgba(234,229,217,.13);padding:16px 22px 4px}
+  .cc-detail[hidden]{display:none}
+  .cc-zeile{display:flex;align-items:flex-start;gap:14px;padding:12px 0}
+  .cc-zeile + .cc-zeile{border-top:1px solid rgba(234,229,217,.09)}
+  .cc-zt{font-size:14px;font-weight:500;color:#f6f2e9;margin:0 0 3px}
+  .cc-zb{font-size:13px;line-height:1.55;color:#9d978c;margin:0}
+  .cc-fix{flex-shrink:0;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:#6f6a61;padding-top:3px}
+  .cc-schalter{flex-shrink:0;width:44px;height:25px;border-radius:99px;border:0;cursor:pointer;
+    background:rgba(234,229,217,.2);position:relative;transition:background .22s ease;padding:0}
+  .cc-schalter::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;
+    border-radius:50%;background:#f6f2e9;transition:transform .22s ease}
+  .cc-schalter[aria-checked="true"]{background:#f2ab00}
+  .cc-schalter[aria-checked="true"]::after{transform:translateX(19px)}
+  /* Spaeterer Zugang zur Auswahl: dezent, ueber dem festen Footer */
+  .cc-wieder{position:fixed;left:clamp(14px,3vw,28px);bottom:clamp(14px,3vw,28px);z-index:2147481000;
+    background:rgba(33,29,23,.9);color:#c9c3b6;border:1px solid rgba(234,229,217,.18);
+    border-radius:99px;font-family:'DM Sans',system-ui,sans-serif;font-size:12px;
+    padding:8px 14px;cursor:pointer;opacity:0;transition:opacity .4s ease,color .18s ease}
+  .cc-wieder.cc-da{opacity:.72}
+  .cc-wieder:hover{opacity:1;color:#f6f2e9}
+  .cc-wieder[hidden]{display:none}
+  @media(max-width:520px){
+    .cc-karte{left:10px;right:10px;bottom:10px;width:auto}
+    .cc-btn{flex:1 1 100%}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .cc-karte,.cc-wieder{transition:none}
+  }
+</style>
+
+<div class="cc-karte" id="cc-karte" hidden role="dialog" aria-modal="false"
+     aria-labelledby="cc-titel" aria-describedby="cc-text">
+  <div class="cc-linie"></div>
+  <div class="cc-innen">
+    <p class="cc-titel" id="cc-titel">Dürfen wir mitzählen?</p>
+    <p class="cc-text" id="cc-text">Wir würden gern anonym erfassen, welche Seiten gelesen werden — damit wir sie besser machen können. Nur mit Ihrer Zustimmung. Ohne sie funktioniert die Seite genauso.
+      <a href="rechtliches.html#cookies">Mehr dazu</a></p>
+    <div class="cc-knoepfe">
+      <button class="cc-btn cc-ja" id="cc-ja" type="button">Einverstanden</button>
+      <button class="cc-btn cc-nein" id="cc-nein" type="button">Nur das Nötige</button>
+      <button class="cc-mehr" id="cc-mehr" type="button" aria-expanded="false"
+              aria-controls="cc-detail">Einstellungen</button>
+    </div>
+  </div>
+  <div class="cc-detail" id="cc-detail" hidden>
+    <div class="cc-zeile">
+      <div style="flex:1">
+        <p class="cc-zt">Notwendig</p>
+        <p class="cc-zb">Ansicht hell/dunkel und der laufende Service-Chat. Ohne diese Speicherung funktioniert die Seite nicht.</p>
+      </div>
+      <span class="cc-fix">immer an</span>
+    </div>
+    <div class="cc-zeile">
+      <div style="flex:1">
+        <p class="cc-zt">Reichweitenmessung</p>
+        <p class="cc-zb">Google Analytics — zählt Seitenaufrufe und Verweildauer. Setzt Cookies; Daten können in die USA übertragen werden.</p>
+      </div>
+      <button class="cc-schalter" id="cc-schalter" type="button" role="switch"
+              aria-checked="false" aria-label="Reichweitenmessung erlauben"></button>
+    </div>
+    <div class="cc-knoepfe" style="margin:6px 0 18px">
+      <button class="cc-btn cc-ja" id="cc-speichern" type="button">Auswahl speichern</button>
+    </div>
+  </div>
+</div>
+
+<button class="cc-wieder" id="cc-wieder" hidden type="button">Cookie-Einstellungen</button>
+
+<script>
+(function () {
+  var MESS_ID = "G-K6396H2W0T";
+  var SCHLUESSEL = "britz-consent";
+
+  var karte = document.getElementById("cc-karte");
+  var wieder = document.getElementById("cc-wieder");
+  var detail = document.getElementById("cc-detail");
+  var schalter = document.getElementById("cc-schalter");
+  var mehr = document.getElementById("cc-mehr");
+  if (!karte) return;
+
+  // Consent Mode v2: alles zunaechst abgelehnt, bevor irgendetwas laedt.
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  window.gtag = gtag;
+  gtag("consent", "default", {
+    ad_storage: "denied",
+    ad_user_data: "denied",
+    ad_personalization: "denied",
+    analytics_storage: "denied",
+    functionality_storage: "granted",
+    security_storage: "granted",
+    wait_for_update: 500
+  });
+
+  function lesen() {
+    try { return localStorage.getItem(SCHLUESSEL); } catch (e) { return null; }
+  }
+  function schreiben(w) {
+    try { localStorage.setItem(SCHLUESSEL, w); } catch (e) {}
+  }
+
+  var geladen = false;
+  function analyticsLaden() {
+    if (geladen) return; geladen = true;
+    var s = document.createElement("script");
+    s.async = true;
+    s.src = "https://www.googletagmanager.com/gtag/js?id=" + MESS_ID;
+    document.head.appendChild(s);
+    gtag("js", new Date());
+    gtag("config", MESS_ID, { anonymize_ip: true });
+  }
+
+  function anwenden(erlaubt) {
+    gtag("consent", "update", { analytics_storage: erlaubt ? "granted" : "denied" });
+    if (erlaubt) analyticsLaden();
+  }
+
+  function zeigen(el) {
+    el.hidden = false;
+    requestAnimationFrame(function () { el.classList.add("cc-da"); });
+  }
+  function verbergen(el, danach) {
+    el.classList.remove("cc-da");
+    setTimeout(function () { el.hidden = true; if (danach) danach(); }, 420);
+  }
+
+  function entscheiden(erlaubt) {
+    schreiben(erlaubt ? "ja" : "nein");
+    anwenden(erlaubt);
+    verbergen(karte, function () { zeigen(wieder); });
+  }
+
+  document.getElementById("cc-ja").onclick = function () { entscheiden(true); };
+  document.getElementById("cc-nein").onclick = function () { entscheiden(false); };
+  document.getElementById("cc-speichern").onclick = function () {
+    entscheiden(schalter.getAttribute("aria-checked") === "true");
+  };
+  schalter.onclick = function () {
+    var an = schalter.getAttribute("aria-checked") === "true";
+    schalter.setAttribute("aria-checked", an ? "false" : "true");
+  };
+  mehr.onclick = function () {
+    var auf = !detail.hidden;
+    detail.hidden = auf;
+    mehr.setAttribute("aria-expanded", auf ? "false" : "true");
+  };
+  wieder.onclick = function () {
+    schalter.setAttribute("aria-checked", lesen() === "ja" ? "true" : "false");
+    detail.hidden = false;
+    mehr.setAttribute("aria-expanded", "true");
+    verbergen(wieder, function () { zeigen(karte); });
+  };
+
+  var stand = lesen();
+  if (stand === "ja") { anwenden(true); zeigen(wieder); }
+  else if (stand === "nein") { zeigen(wieder); }
+  else { setTimeout(function () { zeigen(karte); }, 900); }
 })();
 </script>
 
