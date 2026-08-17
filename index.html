@@ -127,12 +127,19 @@
   section,footer,.page,[data-ba]{transition:background-color .35s ease,border-color .35s ease,color .35s ease}
   /* Footer-Reveal */
   a[data-telfoot] [data-telnum]::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;border-radius:2px;background:#f2ab00;transform:scaleX(0);transform-origin:left center;transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
-  a[data-telfoot]:hover [data-telnum]::after,a[data-telfoot]:focus-visible [data-telnum]::after{transform:scaleX(1)}
-  a[data-telfoot]:hover,a[data-telfoot]:focus-visible{color:#855a02}
+  a[data-telfoot]:focus-visible [data-telnum]::after{transform:scaleX(1)}
+  a[data-telfoot]:focus-visible{color:#855a02}
+  @media (hover:hover) and (pointer:fine){
+    a[data-telfoot]:hover [data-telnum]::after{transform:scaleX(1)}
+    a[data-telfoot]:hover{color:#855a02}
+  }
   /* Chat-Knopf im Footer: dieselbe einfahrende Linie wie bei der
      Telefonnummer darueber. Nur unter dem Text, nicht unter dem Punkt. */
   button[data-chatfoot] [data-chatlbl]::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;border-radius:2px;background:#f2ab00;transform:scaleX(0);transform-origin:left center;transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
-  button[data-chatfoot]:hover [data-chatlbl]::after,button[data-chatfoot]:focus-visible [data-chatlbl]::after{transform:scaleX(1)}
+  button[data-chatfoot]:focus-visible [data-chatlbl]::after{transform:scaleX(1)}
+  @media (hover:hover) and (pointer:fine){
+    button[data-chatfoot]:hover [data-chatlbl]::after{transform:scaleX(1)}
+  }
   a[data-telfoot]{width:fit-content}
   .page{position:relative;z-index:2;background:#f7f3ec;box-shadow:0 26px 50px -14px rgba(0,0,0,.38)}
   .page-spacer{height:var(--footer-h,360px);pointer-events:none}
@@ -288,7 +295,11 @@
   nav a[data-navlink]{position:relative}
   nav a[data-navlink]::after{content:'';position:absolute;left:0;right:0;bottom:-7px;height:2px;border-radius:2px;background:#f2ab00;transform:scaleX(0);transform-origin:left center;transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
   nav a[data-navlink].is-active::after{transform:scaleX(var(--p,0));transition:transform .12s linear}
-  nav a[data-navlink]:hover::after{transform:scaleX(1);transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
+  /* Nur mit echtem Zeiger: auf dem Handy bliebe der Hover nach dem
+     Antippen haengen und wuerde die Fortschrittsanzeige ueberdecken. */
+  @media (hover:hover) and (pointer:fine){
+    nav a[data-navlink]:hover::after{transform:scaleX(1);transition:transform .32s cubic-bezier(0.22,0.61,0.36,1)}
+  }
   nav a[data-navlink].is-active{color:#ffffff}
 </style>
 </helmet>
