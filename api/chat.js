@@ -254,6 +254,9 @@ const OEFFNUNG = { 1: [8, 17], 2: [8, 17], 3: [8, 17], 4: [8, 17], 5: [8, 15] };
 const TERMIN_FRUEHESTENS = 9;      // nicht direkt zur Öffnung
 const TERMIN_PUFFER_MIN = 90;      // Abstand zum Feierabend
 const MONTAG_AB = 12;              // Montagvormittag keine Termine
+const PAUSE_VON = 10.5;            // tägliche Werkstattpause 10:30–11:00
+const PAUSE_BIS = 11;              // in dieser Zeit keine Termine anbieten
+const VORLAUF_STD = 3;             // heute frühestens 3 Std. später
 
 function berlinTeile(d) {
   const f = new Intl.DateTimeFormat("de-DE", {
@@ -308,18 +311,36 @@ function istFeiertag(t) {
   return feiertageBerlin(t.jahr)[iso(t)] || null;
 }
 
-function terminFenster(t) {
+// abZeit: frühestmöglicher Beginn als Dezimalstunde (nur für heute gesetzt).
+function terminFenster(t, abZeit) {
   if (t.wochentag === 0 || t.wochentag === 6) return null;
   if (istFeiertag(t)) return null;
   const oh = OEFFNUNG[t.wochentag];
   if (!oh) return null;
   let von = TERMIN_FRUEHESTENS;
   if (t.wochentag === 1) von = MONTAG_AB;          // Montag erst ab mittags
+  if (abZeit != null && abZeit > von) von = abZeit; // Vorlauf für heute
   const bisMin = oh[1] * 60 - TERMIN_PUFFER_MIN;   // Puffer vor Feierabend
   const bis = Math.floor(bisMin / 60) + (bisMin % 60 >= 30 ? 0.5 : 0);
   if (von >= bis) return null;
+
+  // Tägliche Werkstattpause herausschneiden. Es entstehen ein oder zwei
+  // Abschnitte; Termine, die vorher beginnen, bleiben davon unberührt.
+  const teile = [];
+  if (von < PAUSE_VON && bis > PAUSE_BIS) {
+    teile.push([von, PAUSE_VON], [PAUSE_BIS, bis]);
+  } else if (von < PAUSE_VON && bis > PAUSE_VON) {
+    teile.push([von, PAUSE_VON]);                  // endet an der Pause
+  } else if (von < PAUSE_BIS && bis > PAUSE_BIS) {
+    teile.push([PAUSE_BIS, bis]);                  // beginnt nach der Pause
+  } else if (von >= PAUSE_VON && bis <= PAUSE_BIS) {
+    return null;                                   // läge ganz in der Pause
+  } else {
+    teile.push([von, bis]);                        // Pause nicht berührt
+  }
+
   const fmt = x => (Number.isInteger(x) ? `${x}:00` : `${Math.floor(x)}:30`);
-  return `${fmt(von)}–${fmt(bis)} Uhr`;
+  return teile.map(([a, b]) => `${fmt(a)}–${fmt(b)}`).join(" und ") + " Uhr";
 }
 
 // Kleine Helfer für die Lagebeschreibung
@@ -403,17 +424,18 @@ export function zeitKontext() {
     (t.stunde + t.minute / 60) >= oh[0] && (t.stunde + t.minute / 60) < oh[1];
 
   // Nächste buchbare Tage ermitteln (max. 10 Tage vorausschauen)
+  // Für heute gilt eine Vorlaufzeit: frühester Beginn ist jetzt + 3 Std.,
+  // aufgerundet auf die nächste halbe Stunde. Ist danach nichts mehr übrig,
+  // fällt der Tag automatisch raus und der nächste Werktag rückt nach.
+  const jetztDez = t.stunde + t.minute / 60;
+  const abHeute = Math.ceil((jetztDez + VORLAUF_STD) * 2) / 2;
+
   const tage = [];
   for (let i = 0; i < 12 && tage.length < 5; i++) {
     const d = new Date(jetzt.getTime() + i * 86400000);
     const tt = berlinTeile(d);
-    const fenster = terminFenster(tt);
+    const fenster = terminFenster(tt, i === 0 ? abHeute : null);
     if (!fenster) continue;
-    // Für heute nur, wenn das Zeitfenster noch nicht vorbei ist
-    if (i === 0) {
-      const bisH = parseInt(fenster.split("–")[1], 10);
-      if (t.stunde >= bisH) continue;
-    }
     const label = i === 0 ? "heute" : (i === 1 ? "morgen" : tt.wochentagName);
     tage.push(`${label} (${tt.tag}.${tt.monat}.): ${fenster}`);
   }
