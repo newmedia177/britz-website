@@ -10,11 +10,26 @@ const FENSTER_MS = 24 * 60 * 60 * 1000;   // WhatsApp-Antwortfenster
 const MAX_OFFEN = 30;
 
 export const RE_TERMIN = /\[\[TERMIN\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
+// Bestaetigter Termin. Wird erst gesetzt, wenn die Werkstatt zugesagt hat -
+// vorher bekommt der Kunde bewusst KEINEN Kalendereintrag, sonst muesste er
+// ihn bei einer Absage selbst wieder korrigieren.
+export const RE_TERMIN_OK = /\[\[TERMIN_OK\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
 export const RE_KONTAKT = /\[\[KONTAKT\|([^|]*)\|([^\]]*)\]\]/;
+
+// Adresse der Termindatei. Eigener Endpunkt statt "data:"-Adresse, weil
+// Letztere auf iPhone und iPad nicht zuverlaessig funktioniert.
+export function icsAdresse(wann, titel, ort) {
+  const basis = (process.env.SITE_URL || "https://www.autolackiererei-britz.de")
+    .replace(/\/+$/, "");
+  return basis + "/api/ics?t=" + encodeURIComponent(wann) +
+         "&s=" + encodeURIComponent(titel) +
+         "&l=" + encodeURIComponent(ort);
+}
 
 export function markerRaus(text) {
   return String(text || "")
     .replace(RE_TERMIN, "")
+    .replace(RE_TERMIN_OK, "")
     .replace(RE_KONTAKT, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -181,6 +196,9 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
     tel, kanal,
     kundeNr: kanal === "whatsapp" ? String(kundeNr || "") : "",
     wann,
+    // Fuer den Kalendereintrag nach der Bestaetigung
+    titel: (mT[2] || "").trim() || "Termin, Autolackiererei in Britz",
+    ort: (mT[3] || "").trim() || "Haarlemer Straße 48-54, 12359 Berlin",
     ts: Date.now()
   };
   liste.push(eintrag);
@@ -248,8 +266,24 @@ export async function inhaberAntwort(vonInhaber, text) {
     return true;
   }
 
+  // Nur bei einer klaren Zusage bekommt der Kunde den Kalendereintrag.
+  // Schlaegt der Inhaber eine andere Zeit vor oder sagt ab, waere ein
+  // Eintrag falsch - dann bleibt es bei der reinen Textnachricht.
+  const zusage = /\b(passt|geht klar|in ordnung|bestätigt|bestaetigt|ok|okay|klar|machen wir|passt so)\b/i.test(nachricht);
+  const gegenvorschlag = /\b(lieber|statt|besser|geht nicht|leider|verschieb|anderer|andere zeit|absag|früher|später|frueher|spaeter)\b/i.test(nachricht)
+    || /\d{1,2}[:.]\d{2}|\d{1,2}\s*uhr/i.test(nachricht);
+
+  let kalender = "";
+  if (zusage && !gegenvorschlag && eintrag.wann) {
+    kalender = "\n\nIn den Kalender eintragen:\n" +
+      icsAdresse(eintrag.wann,
+                 eintrag.titel || "Termin, Autolackiererei in Britz",
+                 eintrag.ort || "Haarlemer Straße 48-54, 12359 Berlin");
+  }
+
   const ok = await sendWA(eintrag.kundeNr,
-    "Kurze Rückmeldung aus der Werkstatt zu Ihrem Wunschtermin:\n\n" + nachricht);
+    "Kurze Rückmeldung aus der Werkstatt zu Ihrem Wunschtermin:\n\n" +
+    nachricht + kalender);
 
   // Die Rueckmeldung gehoert in den Gespraechsverlauf des Kunden.
   // Sonst weiss Alex beim naechsten Mal nichts davon und widerspricht

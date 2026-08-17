@@ -15,6 +15,7 @@
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
+         RE_TERMIN_OK, icsAdresse,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -258,11 +259,24 @@ async function verarbeite(req) {
                         thema: text, ersatzName: profilName });
   }
 
+  // Bestaetigter Termin: Auf WhatsApp gibt es keine Karte mit Knoepfen.
+  // Statt den Marker nur zu entfernen, haengen wir eine antippbare
+  // Kalender-Adresse an. Nur beim BESTAETIGTEN Termin - beim blossen
+  // Wunschtermin bewusst nicht, damit niemand einen Eintrag anlegt,
+  // den die Werkstatt vielleicht noch absagt.
+  const mOk = String(reply).match(RE_TERMIN_OK);
+  let kalenderZeile = "";
+  if (mOk && !chef) {
+    kalenderZeile = "\n\nIn den Kalender eintragen:\n" +
+      icsAdresse(mOk[1].trim(), mOk[2].trim(), mOk[3].trim());
+  }
+
   reply = markerRaus(reply);
 
   // Gedankenstriche und Ausrufezeichen entfernen (wirken maschinell)
   reply = saeubern(reply, true).trim();
   if (!reply) reply = "Können Sie das noch einmal anders formulieren?";
+  if (kalenderZeile) reply += kalenderZeile;
 
   await sendeMenschlich(from, reply);
   await logGapIfNeeded(text, reply);   // Wissenslücke still protokollieren

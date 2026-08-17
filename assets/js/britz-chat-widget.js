@@ -687,11 +687,18 @@
     }
 
     function handleTermin(node, txt) {
+      // Zwei Marker: TERMIN = Wunschtermin (noch offen),
+      // TERMIN_OK = von der Werkstatt bestaetigt. Kalender-Knoepfe gibt
+      // es NUR beim bestaetigten Termin, damit niemand einen Eintrag
+      // anlegt, der spaeter wieder geaendert werden muesste.
+      var reOk = /\[\[TERMIN_OK\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
       var re = /\[\[TERMIN\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
       // Der Kontakt-Marker ist nur fuer das Team und wird nie angezeigt
       var reK = /\[\[KONTAKT\|[^\]]*\]\]/;
-      var m = txt.match(re);
-      var clean = txt.replace(re, "").replace(reK, "")
+      var mOk = txt.match(reOk);
+      var m = mOk || txt.match(re);
+      var bestaetigt = !!mOk;
+      var clean = txt.replace(reOk, "").replace(re, "").replace(reK, "")
                      .replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "").trim();
       linkify(node, clean);
       if (!m) return clean;
@@ -712,7 +719,9 @@
       var b = document.createElement("b"); b.textContent = titel;
       var sp = document.createElement("span"); sp.textContent = when + " \u00b7 " + adr;
       var note = document.createElement("i");
-      note.textContent = "Wunschtermin \u2013 wird vom Team noch best\u00e4tigt";
+      note.textContent = bestaetigt
+        ? "Termin best\u00e4tigt"
+        : "Wunschtermin \u2013 wird vom Team noch best\u00e4tigt";
       // Kalender-Auswahl: Google braucht eine Adresse im Netz,
       // Apple und Outlook oeffnen eine .ics-Datei nativ.
       var ende = new Date(d.getTime() + 60 * 60 * 1000);
@@ -722,43 +731,19 @@
       }
       // Pflicht nach RFC 5545: Komma, Semikolon und Backslash maskieren.
       // Ohne das zerlegen manche Kalender die Adresse an jedem Komma.
-      function esc(t) {
-        return String(t).replace(/\\/g, "\\\\")
-                        .replace(/;/g, "\\;")
-                        .replace(/,/g, "\\,")
-                        .replace(/\n/g, "\\n");
-      }
-
-      function icsDatei() {
-        var uid = "britz-" + d.getTime() + "@autolackiererei-britz.de";
-        return [
-          "BEGIN:VCALENDAR",
-          "VERSION:2.0",
-          "PRODID:-//Autolackiererei in Britz//Termin//DE",
-          "CALSCALE:GREGORIAN",
-          "METHOD:PUBLISH",
-          "BEGIN:VEVENT",
-          "UID:" + uid,
-          "DTSTAMP:" + utc(new Date()),
-          "DTSTART:" + utc(d),
-          "DTEND:" + utc(ende),
-          "SUMMARY:" + esc(titel),
-          "LOCATION:" + esc(adr),
-          "DESCRIPTION:" + esc("Wunschtermin, wird vom Team noch bestätigt. " +
-                               "Rückfragen: 030 607 97 930"),
-          "END:VEVENT",
-          "END:VCALENDAR"
-        ].join("\r\n");
+      // Termindatei ueber einen echten Endpunkt statt als "data:"-Adresse.
+      // Auf iPhone und iPad wird ein Download per data:-Adresse von Safari
+      // ignoriert oder als Text geoeffnet - genau daran ist der Kalender
+      // bisher gescheitert. Eine richtige Adresse mit Content-Type
+      // text/calendar oeffnet dagegen ueberall den Kalender.
+      function icsLink() {
+        return "/api/ics?t=" + encodeURIComponent(isoStr) +
+               "&s=" + encodeURIComponent(titel) +
+               "&l=" + encodeURIComponent(adr);
       }
 
       function ladeIcs() {
-        var a = document.createElement("a");
-        a.href = "data:text/calendar;charset=utf-8," +
-                 encodeURIComponent(icsDatei());
-        a.download = "termin-autolackiererei-britz.ics";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        window.location.href = icsLink();
       }
 
       function googleLink() {
@@ -767,33 +752,40 @@
           "&dates=" + utc(d) + "/" + utc(ende) +
           "&location=" + encodeURIComponent(adr) +
           "&details=" + encodeURIComponent(
-            "Wunschtermin, wird vom Team noch bestätigt. " +
-            "Rückfragen: 030 607 97 930");
+            "Best\u00e4tigter Termin. R\u00fcckfragen: 030 607 97 930");
       }
-
-      var label = document.createElement("em");
-      label.className = "alb-terminlbl";
-      label.textContent = "Zum Kalender hinzuf\u00fcgen";
-
-      var reihe = document.createElement("div");
-      reihe.className = "alb-terminbtns";
-
-      function knopf(text, aktion) {
-        var k = document.createElement("button");
-        k.type = "button";
-        k.textContent = text;
-        k.onclick = aktion;
-        reihe.appendChild(k);
-      }
-      knopf("Google", function () {
-        window.open(googleLink(), "_blank", "noopener");
-      });
-      knopf("Apple", ladeIcs);
-      knopf("Outlook", ladeIcs);
 
       card.appendChild(b); card.appendChild(sp);
       card.appendChild(note);
-      card.appendChild(label); card.appendChild(reihe);
+
+      // Kalender-Knoepfe erst nach der Bestaetigung durch die Werkstatt.
+      // Beim blossen Wunschtermin waere ein Eintrag verfrueht: sagt die
+      // Werkstatt ab oder verschiebt, muesste der Kunde ihn selbst wieder
+      // korrigieren.
+      if (bestaetigt) {
+        var label = document.createElement("em");
+        label.className = "alb-terminlbl";
+        label.textContent = "Zum Kalender hinzuf\u00fcgen";
+
+        var reihe = document.createElement("div");
+        reihe.className = "alb-terminbtns";
+
+        function knopf(text, aktion) {
+          var k = document.createElement("button");
+          k.type = "button";
+          k.textContent = text;
+          k.onclick = aktion;
+          reihe.appendChild(k);
+        }
+        knopf("Google", function () {
+          window.open(googleLink(), "_blank", "noopener");
+        });
+        knopf("Apple", ladeIcs);
+        knopf("Outlook", ladeIcs);
+
+        card.appendChild(label); card.appendChild(reihe);
+      }
+
       node.appendChild(card);
       return clean;
     }
