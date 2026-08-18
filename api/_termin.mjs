@@ -302,24 +302,20 @@ export function kollidiert(wunsch, belegt) {
 }
 
 // ---- Ruhezeiten für den Inhaber -------------------------------------
-// Dirk möchte nachts und am Wochenende nicht gestört werden. Meldungen
-// außerhalb der Bürozeit werden gesammelt und beim nächsten Kontakt
-// am Morgen zugestellt.
+// Nachts keine Meldungen. Am Wochenende dagegen schon – Dirk schaut
+// dann durchaus rein, nur mitten in der Nacht soll es still bleiben.
 //
 // Wichtig zur Ehrlichkeit: Ein Server verschickt nichts von selbst um
 // 8 Uhr. Die gesammelten Meldungen gehen raus, sobald morgens die erste
 // Aktivität stattfindet (Dirk schreibt oder ein Kunde meldet sich).
-const RUHE_VON = 17;   // ab 17 Uhr keine Meldungen mehr
-const RUHE_BIS = 8;    // erst ab 8 Uhr wieder
+export const RUHE_VON = 17;   // ab 17 Uhr keine Meldungen mehr
+export const RUHE_BIS = 8;    // erst ab 8 Uhr wieder
 
 export function istRuhezeit(d = new Date()) {
-  const teile = new Intl.DateTimeFormat("de-DE", {
-    weekday: "short", hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
-  }).formatToParts(d);
-  const std = Number((teile.find(p => p.type === "hour") || {}).value || 0);
-  const tag = (teile.find(p => p.type === "weekday") || {}).value || "";
-  if (/^(Sa|So)/i.test(tag)) return true;              // Wochenende
-  return std < RUHE_BIS || std >= RUHE_VON;            // nachts
+  const std = Number(new Intl.DateTimeFormat("de-DE", {
+    hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
+  }).formatToParts(d).find(p => p.type === "hour").value);
+  return std < RUHE_BIS || std >= RUHE_VON;
 }
 
 // Zurückgehaltene Meldungen ablegen

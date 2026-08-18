@@ -9,7 +9,7 @@
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
-         warteschlangeZustellen } from "./_termin.mjs";
+         warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -276,6 +276,7 @@ const MONTAG_AB = 12;              // Montagvormittag keine Termine
 const PAUSE_VON = 10.5;            // tägliche Werkstattpause 10:30–11:00
 const PAUSE_BIS = 11;              // in dieser Zeit keine Termine anbieten
 const VORLAUF_STD = 3;             // heute frühestens 3 Std. später
+const VORLAUF_INFO_STD = 2;        // Puffer, nachdem die Werkstatt Bescheid weiß
 
 function berlinTeile(d) {
   const f = new Intl.DateTimeFormat("de-DE", {
@@ -446,16 +447,33 @@ export function zeitKontext(belegt) {
   // Für heute gilt eine Vorlaufzeit: frühester Beginn ist jetzt + 3 Std.,
   // aufgerundet auf die nächste halbe Stunde. Ist danach nichts mehr übrig,
   // fällt der Tag automatisch raus und der nächste Werktag rückt nach.
+  // Vorlaufzeit. Zwei Bedingungen, es gilt die spätere:
+  //   1. mindestens 3 Stunden ab jetzt
+  //   2. mindestens 2 Stunden, nachdem die Werkstatt überhaupt Bescheid weiß
+  // Punkt 2 ist der wichtige: Meldet sich jemand nachts oder Sonntagabend,
+  // erfährt Dirk davon erst morgens ab 8 Uhr. Ein Termin um 9 Uhr wäre
+  // zwar theoretisch frei, aber vor Ort weiß dann niemand, worum es geht.
   const jetztDez = t.stunde + t.minute / 60;
-  const abHeute = Math.ceil((jetztDez + VORLAUF_STD) * 2) / 2;
+  const stdBisInfo = !istRuhezeit(jetzt) ? 0
+    : (jetztDez >= RUHE_VON ? 24 - jetztDez + RUHE_BIS : RUHE_BIS - jetztDez);
+  const vorlaufStd = Math.max(VORLAUF_STD, stdBisInfo + VORLAUF_INFO_STD);
+  const frueh = new Date(jetzt.getTime() + vorlaufStd * 3600000);
+  const fruehT = berlinTeile(frueh);
+  const fruehDez = Math.ceil((fruehT.stunde + fruehT.minute / 60) * 2) / 2;
 
   const tage = [];
   for (let i = 0; i < 12 && tage.length < 5; i++) {
     const d = new Date(jetzt.getTime() + i * 86400000);
     const tt = berlinTeile(d);
-    const fenster = terminFenster(tt, i === 0 ? abHeute : null);
+    // Tage vor dem frühestmöglichen Termin ganz überspringen
+    const selberTag = tt.tag === fruehT.tag && tt.monat === fruehT.monat &&
+                      tt.jahr === fruehT.jahr;
+    if (d.getTime() < frueh.getTime() && !selberTag) continue;
+    const fenster = terminFenster(tt, selberTag ? fruehDez : null);
     if (!fenster) continue;
-    const label = i === 0 ? "heute" : (i === 1 ? "morgen" : tt.wochentagName);
+    const heuteT = berlinTeile(jetzt);
+    const istHeute = tt.tag === heuteT.tag && tt.monat === heuteT.monat;
+    const label = istHeute ? "heute" : (i === 1 ? "morgen" : tt.wochentagName);
     tage.push(`${label} (${tt.tag}.${tt.monat}.): ${fenster}`);
   }
 
