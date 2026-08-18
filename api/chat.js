@@ -8,7 +8,8 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
-         leiteBilderWeiter, RE_KONTAKT, belegteZeiten } from "./_termin.mjs";
+         leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
+         warteschlangeZustellen } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -157,6 +158,9 @@ export default async function handler(req, res) {
   const frage = typeof (lastUser && lastUser.content) === "string"
     ? lastUser.content : "";
   await logGapIfNeeded(frage, answer);
+
+  // Zurueckgehaltene Nachtmeldungen zustellen (nur in der Buerozeit)
+  await warteschlangeZustellen().catch(() => {});
 
   // Terminanfrage an den Inhaber melden
   await meldeTermin({ antwort: answer, kanal: "web", thema: frage });

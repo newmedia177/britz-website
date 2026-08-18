@@ -16,6 +16,7 @@ import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
+         warteschlangeZustellen,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -273,6 +274,10 @@ async function verarbeite(req) {
   // Terminanfrage an den Inhaber melden, bevor die Marker entfernt werden
   // Nur bei Kunden eine Terminanfrage anlegen. Spricht der Inhaber ueber
   // Termine, waere das eine Geisteranfrage an ihn selbst.
+  // Zurueckgehaltene Nachtmeldungen zustellen, sobald wieder Buerozeit
+  // ist und irgendjemand schreibt.
+  await warteschlangeZustellen().catch(() => {});
+
   if (!chef) {
     await meldeTermin({ antwort: reply, kanal: "whatsapp", kundeNr: from,
                         thema: text, ersatzName: profilName });

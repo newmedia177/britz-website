@@ -242,6 +242,18 @@ export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, t
   }
   if (!ids.length) return false;
 
+  // Ruhezeit: Bilder nicht mitten in der Nacht schicken. Wir merken den
+  // Vorgang vor; die Bilder selbst holt sich der Inhaber über die
+  // Terminanfrage oder der Kunde schickt sie erneut. Gespeichert wird
+  // weiterhin nichts.
+  if (istRuhezeit()) {
+    await warteschlangeAnhaengen(
+      "Fotos eingegangen\n" + wer +
+      (hinweis ? "\n" + String(hinweis).slice(0, 200) : "") +
+      "\n(" + ids.length + " Bild(er), kommen gleich)", ids);
+    return true;
+  }
+
   let zugestellt = false;
   for (const n of nummern) {
     for (let i = 0; i < ids.length; i++) {
@@ -287,6 +299,78 @@ export function kollidiert(wunsch, belegt) {
     const b = new Date(w).getTime();
     return !isNaN(b) && Math.abs(a - b) < TERMIN_DAUER_MIN * 60000;
   });
+}
+
+// ---- Ruhezeiten für den Inhaber -------------------------------------
+// Dirk möchte nachts und am Wochenende nicht gestört werden. Meldungen
+// außerhalb der Bürozeit werden gesammelt und beim nächsten Kontakt
+// am Morgen zugestellt.
+//
+// Wichtig zur Ehrlichkeit: Ein Server verschickt nichts von selbst um
+// 8 Uhr. Die gesammelten Meldungen gehen raus, sobald morgens die erste
+// Aktivität stattfindet (Dirk schreibt oder ein Kunde meldet sich).
+const RUHE_VON = 17;   // ab 17 Uhr keine Meldungen mehr
+const RUHE_BIS = 8;    // erst ab 8 Uhr wieder
+
+export function istRuhezeit(d = new Date()) {
+  const teile = new Intl.DateTimeFormat("de-DE", {
+    weekday: "short", hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
+  }).formatToParts(d);
+  const std = Number((teile.find(p => p.type === "hour") || {}).value || 0);
+  const tag = (teile.find(p => p.type === "weekday") || {}).value || "";
+  if (/^(Sa|So)/i.test(tag)) return true;              // Wochenende
+  return std < RUHE_BIS || std >= RUHE_VON;            // nachts
+}
+
+// Zurückgehaltene Meldungen ablegen
+async function warteschlangeAnhaengen(text, bilder) {
+  const liste = await jsonLesen("wartend", []);
+  liste.push({ text, bilder: Array.isArray(bilder) ? bilder : [], ts: Date.now() });
+  await jsonSchreiben("wartend", liste.slice(-30));
+}
+
+// Beim nächsten Kontakt in der Bürozeit alles Zurückgehaltene zustellen.
+// Wird bei jeder eingehenden Nachricht aufgerufen.
+export async function warteschlangeZustellen() {
+  if (istRuhezeit()) return false;
+  const liste = await jsonLesen("wartend", []);
+  if (!liste.length) return false;
+
+  const nummern = inhaberNummern();
+  if (!nummern.length) return false;
+
+  const kopf = liste.length === 1
+    ? "Das kam außerhalb der Bürozeit rein:\n――――――――――――\n"
+    : "Das kam außerhalb der Bürozeit rein (" + liste.length + " Vorgänge):\n" +
+      "――――――――――――\n";
+  const text = kopf + liste.map(e => e.text).join("\n\n――――――――――――\n");
+
+  let zugestellt = false;
+  for (const n of nummern) {
+    if (await sendWA(n, text.slice(0, 3900))) zugestellt = true;
+  }
+  // Zurückgehaltene Bilder hinterherschicken. Die Medien-Kennung bleibt
+  // bei Meta gültig, wir haben nichts gespeichert.
+  if (zugestellt) {
+    for (const e of liste) {
+      for (const id of (e.bilder || [])) {
+        for (const n of nummern) {
+          await sendWABild(n, id, "Nachgereicht: " +
+            String(e.text || "").split("\n")[1] || "Kundenfoto");
+        }
+      }
+    }
+    await jsonSchreiben("wartend", []);
+    return true;
+  }
+  // Zustellung nicht möglich (24-Stunden-Fenster zu). Liste behalten und
+  // erst nach 12 Stunden per E-Mail nachreichen, statt sie zu verlieren.
+  const aeltest = Math.min(...liste.map(e => e.ts || Date.now()));
+  if (Date.now() - aeltest > 12 * 3600000) {
+    await sendMail("Offene Anfragen (WhatsApp nicht zustellbar)", text);
+    await jsonSchreiben("wartend", []);
+  }
+  return false;
 }
 
 export function datumLesbar(iso) {
@@ -382,16 +466,24 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
   const fuss = kanal === "whatsapp"
     ? "\nKam über: WhatsApp\n" +
       "Bitte bestätigen, dann bekommt der Kunde die Zusage und einen\n" +
-      "Kalendereintrag zum Antippen. Schreiben Sie mir dazu:\n" +
+      "Kalendereintrag zum Antippen. Schreib mir dazu:\n" +
       "• \"Termin " + nr + " passt\"\n" +
       "• \"Termin " + nr + " lieber Donnerstag 10 Uhr\"\n" +
-      "Ohne Ihre Rückmeldung erhält der Kunde keine Bestätigung."
+      "Ohne Rückmeldung bekommt der Kunde keine Bestätigung."
     : "\nKam über: Website-Chat\n" +
       "Den Kunden erreiche ich hier nicht mehr.\n" +
-      "Bitte melden Sie sich selbst zur Bestätigung" +
+      "Bitte selbst zur Bestätigung melden" +
       (tel ? ", Nummer siehe oben." : " (keine Nummer hinterlegt).");
 
   const meldung = kopf + fuss;
+
+  // Ruhezeit: nichts verschicken, sondern sammeln. Der Inhaber bekommt
+  // alles beim nächsten Kontakt am Morgen.
+  if (istRuhezeit()) {
+    await warteschlangeAnhaengen(meldung);
+    return true;
+  }
+
   let zugestellt = false;
   for (const n of nummern) {
     if (await sendWA(n, meldung)) zugestellt = true;
@@ -428,14 +520,14 @@ export async function inhaberAntwort(vonInhaber, text) {
   if (!eintrag) {
     await sendWA(vonInhaber,
       "Zu Nummer " + nr + " finde ich keine Anfrage. " +
-      "Mit \"Termine\" zeige ich Ihnen die offenen an.");
+      "Mit \"Termine\" zeige ich dir die offenen an.");
     return true;
   }
 
   if (eintrag.kanal !== "whatsapp" || !eintrag.kundeNr) {
     await sendWA(vonInhaber,
       "Anfrage " + nr + " kam über die Website. Dort kann ich nicht antworten.\n" +
-      "Bitte rufen Sie " + eintrag.name +
+      "Bitte ruf " + eintrag.name +
       (eintrag.tel ? " unter " + eintrag.tel : "") + " an.");
     return true;
   }
@@ -444,7 +536,7 @@ export async function inhaberAntwort(vonInhaber, text) {
     await sendWA(vonInhaber,
       "Anfrage " + nr + " ist älter als 24 Stunden. WhatsApp lässt mich dann " +
       "nicht mehr von sich aus schreiben.\n" +
-      "Bitte melden Sie sich direkt bei " + eintrag.name +
+      "Bitte meld dich direkt bei " + eintrag.name +
       (eintrag.tel ? " unter " + eintrag.tel : "") + ".");
     return true;
   }
@@ -501,7 +593,7 @@ export async function inhaberAntwort(vonInhaber, text) {
 
   await sendWA(vonInhaber, ok
     ? "Erledigt, ich habe es weitergegeben."
-    : "Das Weiterleiten hat nicht geklappt. Bitte melden Sie sich direkt bei " +
+    : "Das Weiterleiten hat nicht geklappt. Bitte meld dich direkt bei " +
       eintrag.name + (eintrag.tel ? " unter " + eintrag.tel : "") + ".");
   return true;
 }
@@ -586,7 +678,7 @@ export async function terminLoeschen(was) {
   const rest = liste.filter(e => e.nr !== nr);
   if (rest.length === liste.length) {
     return "Zu Nummer " + nr + " finde ich keine Anfrage. " +
-           "Mit \"Termine\" zeige ich Ihnen die offenen an.";
+           "Mit \"Termine\" zeige ich dir die offenen an.";
   }
   const weg = liste.find(e => e.nr === nr);
   await jsonSchreiben("termine", rest);
