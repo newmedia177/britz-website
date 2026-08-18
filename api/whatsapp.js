@@ -15,7 +15,7 @@
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
-         RE_TERMIN_OK, icsAdresse, leiteBilderWeiter,
+         RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -159,9 +159,17 @@ async function verarbeite(req) {
       "• Offene Terminanfragen zeigen (er sagt \"Termine\")\n" +
       "• Eine Rückmeldung an einen WhatsApp-Kunden weiterleiten " +
       "(\"Termin 3 passt\" oder \"Termin 3 lieber Donnerstag 10 Uhr\")\n" +
+      "• Verschieben in Kurzform: \"Termin auf 14 Uhr\" (gleicher Tag) " +
+      "oder \"Termin auf 19.08. 14 Uhr\"\n" +
       "• Wissen lernen (\"Merk dir: …\"), Notizen zeigen, Lücken zeigen\n" +
-      "• Eine erledigte Anfrage löschen (\"Lösche Termin 3\") oder alle " +
-      "(\"Lösche alle Termine\")\n\n" +
+      "• Eine erledigte Anfrage löschen (\"Lösche Termin 3\", bei nur einer " +
+      "offenen reicht \"Termin löschen\") oder alle (\"Lösche alle Termine\")\n\n" +
+      "ANREDE: Mit dem Chef und mit Julian duzt du dich – locker und " +
+      "kollegial, kein \"Sie\". Gegenüber KUNDEN bleibt es immer beim Sie.\n" +
+      "Denk mit: Weise von dir aus auf Dinge hin, die untergehen könnten " +
+      "(Anfrage älter als 24 Stunden, zwei Termine kurz hintereinander, " +
+      "Website-Kunde, der einen Anruf braucht). Kurz und sachlich, " +
+      "ohne Floskeln.\n\n" +
       "Wichtig zur Erreichbarkeit der Kunden:\n" +
       "• Kam die Anfrage über WhatsApp, kannst du dem Kunden direkt " +
       "antworten. Biete das aktiv an.\n" +
@@ -196,7 +204,7 @@ async function verarbeite(req) {
     },
     body: JSON.stringify({
       model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
-      max_tokens: 500,
+      max_tokens: 900,
       system: [{
         type: "text",
         text: SYSTEM + "\n\n<wissensbasis>\n" + KNOWLEDGE + "\n</wissensbasis>",
@@ -206,7 +214,7 @@ async function verarbeite(req) {
         // Derselbe Zeit- und Terminkontext wie im Web-Chat. Ohne ihn
         // kennt Alex weder das heutige Datum noch die buchbaren Fenster
         // und versteht Angaben wie "morgen 11 Uhr" nicht.
-        text: zeitKontext() + chefBlock +
+        text: zeitKontext(await belegteZeiten().catch(() => [])) + chefBlock +
           (chef ? "" :
           "\n\nDieser Kunde schreibt über WhatsApp von der Nummer +" + from +
           ". Frag deshalb NICHT nach der Telefonnummer, du hast sie bereits. " +
@@ -250,6 +258,15 @@ async function verarbeite(req) {
   const data = await r.json();
   let reply = (data.content || [])
     .filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+
+  // Reisst die Antwort am Laengenlimit ab, endet sie mitten im Satz
+  // ("... ein, zwei Fotos vom"). Dann den angefangenen Satz lieber
+  // wegschneiden als ihn halb zu verschicken.
+  if (data.stop_reason === "max_tokens" && reply) {
+    const bisSatzende = reply.replace(/\s+\S*$/, "");
+    const m = bisSatzende.match(/^[\s\S]*[.!?…]/);
+    if (m && m[0].trim().length > 20) reply = m[0].trim();
+  }
 
   // Termin-Marker: auf WhatsApp gibt es keinen Kalender-Button –
   // Marker entfernen (der Termin steht ja im Text bestätigt).
@@ -422,11 +439,74 @@ async function handleOwnerCommand(from, text) {
   // "3 passt" -> Rueckmeldung zu Terminanfrage Nr. 3
   if (await inhaberAntwort(from, t)) return true;
 
-  // "Lösche Termin 3", "Termin 3 löschen", "Lösche alle Termine"
+  // "Lösche Termin 3", "Termin 3 löschen", "Lösche alle Termine",
+  // "Termin löschen" (ohne Nummer -> wenn nur einer offen ist)
   m = t.match(/^(?:l(?:ö|oe)sche?|entferne)\s+(?:termin\s*)?(\d{1,3}|alle)(?:\s+termine?)?$/i)
       || t.match(/^termin\s*(\d{1,3})\s+l(?:ö|oe)schen$/i);
   if (m) {
     await sendWhatsApp(from, await terminLoeschen(m[1]));
+    return true;
+  }
+  // Ohne Nummer: nur eindeutig, wenn genau eine Anfrage offen ist.
+  if (/^(?:termin\s+)?l(?:ö|oe)schen$/i.test(t)) {
+    const liste = await jsonLesen("termine", []);
+    const offen = liste.filter(e => Date.now() - (e.ts || 0) < 7 * 86400000);
+    if (offen.length === 1) {
+      await sendWhatsApp(from, await terminLoeschen(String(offen[0].nr)));
+    } else if (!offen.length) {
+      await sendWhatsApp(from, "Es ist gerade nichts offen.");
+    } else {
+      await sendWhatsApp(from,
+        "Es sind " + offen.length + " Anfragen offen. Welche soll weg? " +
+        "Zum Beispiel \"Lösche Termin " + offen[0].nr + "\". " +
+        "Mit \"Termine\" zeige ich sie an.");
+    }
+    return true;
+  }
+
+  // Verschieben in Kurzform:
+  //   "Termin auf 14 Uhr"          -> selber Tag wie bisher vorgemerkt
+  //   "Termin auf 19.08. 14 Uhr"   -> neues Datum
+  //   "Termin 2 auf 14:30"         -> mit Nummer
+  m = t.match(/^termin\s*(\d{1,3})?\s*(?:auf|um)\s+(?:(\d{1,2})\.(\d{1,2})\.?\s*)?(\d{1,2})(?:[:.](\d{2}))?\s*(?:uhr)?$/i);
+  if (m) {
+    const liste = await jsonLesen("termine", []);
+    const offen = liste.filter(e => Date.now() - (e.ts || 0) < 7 * 86400000);
+    const eintrag = m[1]
+      ? offen.find(e => String(e.nr) === m[1])
+      : (offen.length === 1 ? offen[0] : null);
+
+    if (!eintrag) {
+      await sendWhatsApp(from, offen.length
+        ? "Welchen Termin meinst du? Zum Beispiel \"Termin " + offen[0].nr +
+          " auf 14 Uhr\". Mit \"Termine\" zeige ich die offenen an."
+        : "Es ist gerade nichts offen.");
+      return true;
+    }
+
+    // Datum: entweder angegeben oder der bisher vorgemerkte Tag
+    const alt = new Date(eintrag.wann);
+    const tag = m[2] ? Number(m[2]) : alt.getDate();
+    const monat = m[3] ? Number(m[3]) : alt.getMonth() + 1;
+    const jahr = alt.getFullYear();
+    const std = Number(m[4]);
+    const min = m[5] ? Number(m[5]) : 0;
+    const neu = `${jahr}-${String(monat).padStart(2, "0")}-` +
+                `${String(tag).padStart(2, "0")}T${String(std).padStart(2, "0")}:` +
+                `${String(min).padStart(2, "0")}`;
+
+    await sendWhatsApp(from,
+      "Alles klar. Ich gebe " + datumLesbar(neu) + " an " + eintrag.name +
+      " weiter." +
+      (eintrag.kanal === "whatsapp" ? "" :
+       "\nAchtung: kam über die Website, dort erreiche ich den Kunden nicht. " +
+       (eintrag.tel ? "Bitte selbst anrufen: " + eintrag.tel : "")));
+
+    if (eintrag.kanal === "whatsapp") {
+      await inhaberAntwort(from,
+        "Termin " + eintrag.nr + " neuer Termin " + datumLesbar(neu) +
+        ", passt das?");
+    }
     return true;
   }
 

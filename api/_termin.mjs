@@ -260,6 +260,35 @@ export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, t
   return zugestellt;
 }
 
+// ---- Belegte Zeiten -------------------------------------------------
+// Fuer eine kurze Besichtigung rechnen wir 30 Minuten. Ein neuer Termin
+// darf sich damit nicht ueberschneiden - sonst stehen zwei Kunden
+// gleichzeitig auf dem Hof.
+export const TERMIN_DAUER_MIN = 30;
+
+export async function belegteZeiten() {
+  const liste = await jsonLesen("termine", []);
+  const jetzt = Date.now();
+  return liste
+    .filter(e => e.wann && !e.abgesagt)
+    // Vergangene Termine blockieren nichts mehr
+    .filter(e => {
+      const d = new Date(e.wann);
+      return !isNaN(d.getTime()) && d.getTime() > jetzt - 86400000;
+    })
+    .map(e => e.wann);
+}
+
+// Liegt der Wunsch zu dicht an einem schon vergebenen Termin?
+export function kollidiert(wunsch, belegt) {
+  const a = new Date(wunsch).getTime();
+  if (isNaN(a)) return false;
+  return belegt.some(w => {
+    const b = new Date(w).getTime();
+    return !isNaN(b) && Math.abs(a - b) < TERMIN_DAUER_MIN * 60000;
+  });
+}
+
 export function datumLesbar(iso) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   if (!m) return String(iso || "");
@@ -429,15 +458,30 @@ export async function inhaberAntwort(vonInhaber, text) {
 
   let kalender = "";
   if (zusage && !gegenvorschlag && eintrag.wann) {
-    kalender = "\n\nIn den Kalender eintragen:\n" +
-      icsAdresse(eintrag.wann,
-                 eintrag.titel || "Termin, Autolackiererei in Britz",
-                 eintrag.ort || "Haarlemer Straße 48-54, 12359 Berlin");
+    const basis = (process.env.SITE_URL || "https://www.autolackiererei-britz.de")
+      .replace(/\/+$/, "");
+    kalender = "\n\n📅 In den Kalender übernehmen:\n" + basis + "/api/ics?n=" + eintrag.nr;
   }
 
-  const ok = await sendWA(eintrag.kundeNr,
-    "Kurze Rückmeldung aus der Werkstatt zu Ihrem Wunschtermin:\n\n" +
-    nachricht + kalender);
+  // Eine nackte Zustage wie "passt" wirkt beim Kunden abgehackt. Kurze,
+  // klare Bestaetigung daraus machen - der Inhaber soll schnell tippen
+  // koennen, der Kunde trotzdem etwas Ordentliches lesen.
+  const knapp = /^(passt|passt so|ok|okay|klar|geht klar|in ordnung|jo|ja)[.!]?$/i
+    .test(nachricht.trim());
+
+  let kundenText;
+  if (zusage && !gegenvorschlag && eintrag.wann) {
+    kundenText = "Ihr Termin ist bestätigt: " + datumLesbar(eintrag.wann) + ".\n" +
+      (eintrag.ort ? eintrag.ort + "\n" : "") +
+      (knapp ? "" : "\n" + nachricht + "\n") +
+      "\nWir freuen uns auf Sie. Falls etwas dazwischenkommt, " +
+      "melden Sie sich einfach hier.";
+  } else {
+    kundenText = "Kurze Rückmeldung aus der Werkstatt zu Ihrem Wunschtermin:\n\n" +
+      nachricht;
+  }
+
+  const ok = await sendWA(eintrag.kundeNr, kundenText + kalender);
 
   // Die Rueckmeldung gehoert in den Gespraechsverlauf des Kunden.
   // Sonst weiss Alex beim naechsten Mal nichts davon und widerspricht
@@ -472,9 +516,20 @@ export async function tagesBriefing(inhaberNr) {
   if (zuletzt === heute) return "";             // heute schon begruesst
   await redis("SET", schluessel, heute, "EX", 172800);
 
-  const stunde = Number(new Date().toLocaleString("de-DE",
-    { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" }));
-  const gruss = stunde < 11 ? "Guten Morgen" : (stunde < 18 ? "Guten Tag" : "Guten Abend");
+  // ACHTUNG: toLocaleString("de-DE", {hour:"2-digit"}) liefert "12 Uhr",
+  // nicht "12". Number() daraus ergibt NaN, wodurch frueher IMMER
+  // "Guten Abend" herauskam - auch mittags. Deshalb direkt die Stunde
+  // ueber formatToParts holen.
+  const teile = new Intl.DateTimeFormat("de-DE", {
+    hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
+  }).formatToParts(new Date());
+  const stunde = Number((teile.find(p => p.type === "hour") || {}).value || 0);
+  const monat = Number(new Intl.DateTimeFormat("de-DE", {
+    month: "numeric", timeZone: "Europe/Berlin"
+  }).format(new Date()));
+  const abendAb = (monat >= 4 && monat <= 9) ? 18 : 17;   // Sommer/Winter
+  const gruss = stunde < 11 ? "Guten Morgen"
+              : (stunde < abendAb ? "Guten Tag" : "Guten Abend");
 
   const liste = await jsonLesen("termine", []);
   // Datensparsamkeit: Anfragen, die älter als 14 Tage sind, werden

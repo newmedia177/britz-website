@@ -52,14 +52,30 @@ function falten(zeile) {
 
 export default async function handler(req, res) {
   const q = req.query || {};
-  const d = berlinZuUtc(q.t);
+
+  // Kurzform /api/ics?n=3 - der Termin wird selbst nachgeschlagen.
+  // Ergibt eine kurze Adresse, die in WhatsApp nicht als Textwurst
+  // erscheint. Die Langform mit t/s/l bleibt fuer den Web-Chat.
+  let wann = q.t, titel = q.s, ort = q.l;
+  if (!wann && q.n) {
+    try {
+      const { jsonLesen } = await import("./_termin.mjs");
+      const liste = await jsonLesen("termine", []);
+      const e = liste.find(x => String(x.nr) === String(q.n));
+      if (e) { wann = e.wann; titel = e.titel; ort = e.ort; }
+    } catch (err) {
+      console.error("ics lookup", err);
+    }
+  }
+
+  const d = berlinZuUtc(wann);
   if (!d) {
     res.status(400).send("Ungueltiger Termin.");
     return;
   }
 
-  const titel = String(q.s || "Termin, Autolackiererei in Britz").slice(0, TITEL_MAX);
-  const ort = String(q.l || "Haarlemer Straße 48-54, 12359 Berlin").slice(0, ORT_MAX);
+  const t = String(titel || "Termin, Autolackiererei in Britz").slice(0, TITEL_MAX);
+  const o = String(ort || "Haarlemer Straße 48-54, 12359 Berlin").slice(0, ORT_MAX);
   const ende = new Date(d.getTime() + 60 * 60 * 1000);
 
   const zeilen = [
@@ -73,14 +89,14 @@ export default async function handler(req, res) {
     "DTSTAMP:" + utcStempel(new Date()),
     "DTSTART:" + utcStempel(d),
     "DTEND:" + utcStempel(ende),
-    "SUMMARY:" + esc(titel),
-    "LOCATION:" + esc(ort),
+    "SUMMARY:" + esc(t),
+    "LOCATION:" + esc(o),
     "DESCRIPTION:" + esc("Bestätigter Termin. Rückfragen: 030 607 97 930"),
     "STATUS:CONFIRMED",
     "BEGIN:VALARM",
     "TRIGGER:-PT2H",
     "ACTION:DISPLAY",
-    "DESCRIPTION:" + esc("Termin " + titel),
+    "DESCRIPTION:" + esc("Termin " + t),
     "END:VALARM",
     "END:VEVENT",
     "END:VCALENDAR"

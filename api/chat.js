@@ -8,7 +8,7 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
-         leiteBilderWeiter, RE_KONTAKT } from "./_termin.mjs";
+         leiteBilderWeiter, RE_KONTAKT, belegteZeiten } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -92,7 +92,7 @@ export default async function handler(req, res) {
           cache_control: { type: "ephemeral" }
         }, {
           type: "text",
-          text: zeitKontext() + notesBlock
+          text: zeitKontext(await belegteZeiten().catch(() => [])) + notesBlock
         }],
         messages,
         stream: true
@@ -385,7 +385,7 @@ function offenSpaeter(t) {
   return (t.stunde + t.minute / 60) < oh[1];
 }
 
-export function zeitKontext() {
+export function zeitKontext(belegt) {
   const jetzt = new Date();
   const t = berlinTeile(jetzt);
   const uhrzeit = `${String(t.stunde).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}`;
@@ -457,6 +457,19 @@ export function zeitKontext() {
 
   const feiertagsHinweis = feiertagHeute ? `Heute ist ${feiertagHeute}. ` : "";
 
+  // Schon vergebene Zeiten lesbar aufbereiten (nur kommende Termine)
+  const belegtListe = (Array.isArray(belegt) ? belegt : [])
+    .map(w => {
+      const d = new Date(w);
+      if (isNaN(d.getTime()) || d.getTime() < jetzt.getTime() - 3600000) return null;
+      return d.toLocaleString("de-DE", {
+        weekday: "long", day: "numeric", month: "numeric",
+        hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin"
+      }) + " Uhr";
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+
   return "Heute ist " + t.wochentagName + ", " + t.tag + "." + t.monat + "." +
     t.jahr + ", aktuell " + uhrzeit + " Uhr (Berlin). " + feiertagsHinweis +
     lage + "\n\n" +
@@ -483,5 +496,14 @@ export function zeitKontext() {
     (tage.length ? tage.map(x => "  · " + x).join("\n")
                  : "  · zurzeit keine – Team meldet sich zur Abstimmung") +
     "\n- Rechne Wochentage nie selbst aus, nutze ausschließlich diese Liste. " +
-    "Sage nie einen Slot verbindlich zu; das Team bestätigt den Termin.";
+    "Sage nie einen Slot verbindlich zu; das Team bestätigt den Termin.\n" +
+    "- Pro Besichtigung sind 30 Minuten eingeplant. Schlage Uhrzeiten " +
+    "immer zur vollen oder halben Stunde vor.\n" +
+    (belegtListe.length
+      ? "- SCHON VERGEBEN, diese Zeiten NICHT mehr anbieten (auch nicht " +
+        "innerhalb von 30 Minuten davor oder danach):\n" +
+        belegtListe.map(x => "  · " + x).join("\n") +
+        "\n  Ist ein Wunsch davon belegt, biete von dir aus die nächste " +
+        "freie Zeit an – am selben Tag, sonst am nächsten möglichen Tag.\n"
+      : "- Aktuell ist noch keine Zeit vergeben.\n");
 }
