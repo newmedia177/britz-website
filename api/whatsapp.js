@@ -16,7 +16,7 @@ import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
-         warteschlangeZustellen,
+         warteschlangeZustellen, kvaNotiz,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -289,7 +289,8 @@ async function verarbeite(req) {
         mediaIds,
         name: profilName,
         tel: "+" + String(from),
-        hinweis: text.slice(0, 200)
+        hinweis: [kvaNotiz(reply), text.slice(0, 200)]
+                   .filter(Boolean).join("\n")
       });
     }
   }

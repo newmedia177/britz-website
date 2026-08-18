@@ -9,7 +9,8 @@
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
-         warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS } from "./_termin.mjs";
+         warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
+         kvaNotiz } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -175,7 +176,8 @@ export default async function handler(req, res) {
       base64Bilder: images,
       name: ((mK && mK[1]) || "").trim(),
       tel: ((mK && mK[2]) || "").trim(),
-      hinweis: String(frage).slice(0, 200)
+      hinweis: [kvaNotiz(answer), String(frage).slice(0, 200)]
+                 .filter(Boolean).join("\n")
     });
   }
 }

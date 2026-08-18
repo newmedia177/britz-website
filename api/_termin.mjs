@@ -15,6 +15,8 @@ export const RE_TERMIN = /\[\[TERMIN\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
 // ihn bei einer Absage selbst wieder korrigieren.
 export const RE_TERMIN_OK = /\[\[TERMIN_OK\|([^|]+)\|([^|]+)\|([^\]]+)\]\]/;
 export const RE_KONTAKT = /\[\[KONTAKT\|([^|]*)\|([^\]]*)\]\]/;
+// Kalkulationsdaten fuer den Inhaber: Schadensart | Fahrzeug | Fotos
+export const RE_KVA = /\[\[KVA\|([^|]*)\|([^|]*)\|([^\]]*)\]\]/;
 
 // Adresse der Termindatei. Eigener Endpunkt statt "data:"-Adresse, weil
 // Letztere auf iPhone und iPad nicht zuverlaessig funktioniert.
@@ -31,6 +33,7 @@ export function markerRaus(text) {
     .replace(RE_TERMIN, "")
     .replace(RE_TERMIN_OK, "")
     .replace(RE_KONTAKT, "")
+    .replace(RE_KVA, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -220,6 +223,18 @@ const MONATE = ["Januar","Februar","März","April","Mai","Juni","Juli",
 // Wichtig: Es wird nichts bei uns gespeichert. Bei WhatsApp-Kunden wird
 // nur die Medien-Kennung weitergereicht, bei Web-Chat-Fotos das Bild
 // einmal an WhatsApp uebergeben. Das Archiv bleibt bewusst aussen vor.
+// Die vier Kalkulationsangaben als kurze Notiz, damit sie auch bei
+// reinen Kostenvoranschlag-Anfragen (ohne Termin) beim Inhaber landen.
+export function kvaNotiz(antwort) {
+  const m = String(antwort || "").match(RE_KVA);
+  if (!m) return "";
+  return [
+    (m[1] || "").trim() ? "Schadensart: " + m[1].trim().slice(0, 60) : "",
+    (m[2] || "").trim() ? "Fahrzeug: " + m[2].trim().slice(0, 120) : "",
+    (m[3] || "").trim() ? "Fotos: " + m[3].trim().slice(0, 60) : ""
+  ].filter(Boolean).join("\n");
+}
+
 export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, tel, hinweis }) {
   const nummern = inhaberNummern();
   if (!nummern.length) return false;
@@ -391,6 +406,10 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
   const profil = String(ersatzName || "").trim();
   const name = echterName ||
     (profil ? profil + " (nur WhatsApp-Profilname)" : "");
+  const mV = String(antwort || "").match(RE_KVA);
+  const kvaArt  = ((mV && mV[1]) || "").trim();
+  const kvaFzg  = ((mV && mV[2]) || "").trim();
+  const kvaFoto = ((mV && mV[3]) || "").trim();
   let tel = ((mK && mK[2]) || "").trim();
   if (!tel && kanal === "whatsapp" && kundeNr) tel = "+" + String(kundeNr);
 
@@ -457,7 +476,10 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
     "Kunde: " + eintrag.name + "\n" +
     (tel ? "Telefon: " + tel + "\n" : "") +
     "Wunschtermin: " + datumLesbar(eintrag.wann) + "\n" +
-    (thema ? "Anliegen: " + String(thema).slice(0, 140) + "\n" : "");
+    (thema ? "Anliegen: " + String(thema).slice(0, 140) + "\n" : "") +
+    (kvaArt  ? "Schadensart: " + kvaArt.slice(0, 60) + "\n" : "") +
+    (kvaFzg  ? "Fahrzeug: " + kvaFzg.slice(0, 120) + "\n" : "") +
+    (kvaFoto ? "Fotos: " + kvaFoto.slice(0, 60) + "\n" : "");
 
   const fuss = kanal === "whatsapp"
     ? "\nKam über: WhatsApp\n" +
