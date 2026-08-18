@@ -1579,10 +1579,14 @@ class Component extends DCLogic {
 
 <script>
 /* Versionsnummer im Footer: Jahr und Kalenderwoche nach ISO 8601,
-   dahinter eine Ziffer von 1 bis 6. Die Ziffer wird aus dem Datum
-   abgeleitet statt gewuerfelt - so sehen alle Besucher dieselbe und
-   sie bleibt beim Neuladen stehen. Sie wechselt rund zwei Mal im
-   Monat und nie zwei Mal hintereinander auf denselben Wert. */
+   dahinter die Ausgabe innerhalb der Woche.
+
+   WICHTIG: AUSGABE wird von Hand gesetzt, nicht berechnet. Bei jedem
+   groesseren Update um eins hochzaehlen - so zeigt die Nummer echten
+   Fortschritt an. In einer neuen Kalenderwoche wieder bei 1 anfangen.
+   Frueher wurde die Ziffer aus dem Datum abgeleitet; sie wechselte
+   dadurch von allein und sagte nichts ueber Aenderungen aus. */
+var AUSGABE = 7;   // 18.08.2026: Ruhezeiten, Vorlauf, Kalkulationsdaten
 (function () {
   function stand(jetzt) {
     var d = new Date(Date.UTC(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate()));
@@ -1594,15 +1598,7 @@ class Component extends DCLogic {
     var start = new Date(Date.UTC(jahr, 0, 1));
     var kw = Math.ceil(((t - start) / 86400000 + 1) / 7);
 
-    var p = Math.floor(d.getTime() / 86400000 / 12);   // Abschnitt von 12 Tagen
-    function streu(n) {
-      var x = (n * 2654435761) >>> 0;
-      return (x ^ (x >>> 13)) >>> 0;
-    }
-    var v = (streu(p) % 6) + 1;
-    if (v === (streu(p - 1) % 6) + 1) v = (v % 6) + 1;
-
-    return "v. " + jahr + "." + (kw < 10 ? "0" + kw : kw) + "." + v;
+    return "v. " + jahr + "." + (kw < 10 ? "0" + kw : kw) + "." + AUSGABE;
   }
   function setzen() {
     // Das Design-Framework rendert den Footer neu und blendet die
