@@ -84,6 +84,95 @@ export async function jsonSchreiben(schluessel, wert, sekunden) {
 }
 
 // ---- WhatsApp senden ---------------------------------------------
+// ---- Bild an eine Nummer schicken ---------------------------------
+// Bei WhatsApp-Kunden reicht die Medien-Kennung: das Bild bleibt bei
+// Meta liegen, wir speichern es nirgends. Fuer Web-Chat-Fotos laden wir
+// es einmal hoch (siehe medienHochladen) und verschicken die Kennung.
+export async function sendWABild(to, mediaId, unterschrift) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
+  if (!mediaId) return false;
+  try {
+    const r = await fetch(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "image",
+        image: { id: String(mediaId), caption: String(unterschrift || "").slice(0, 1000) }
+      })
+    });
+    if (!r.ok) console.error("sendBild", r.status, await r.text().catch(() => ""));
+    return r.ok;
+  } catch (e) {
+    console.error("sendBild", e);
+    return false;
+  }
+}
+
+// Web-Chat-Foto (Base64) einmal bei WhatsApp ablegen, damit es an den
+// Inhaber geschickt werden kann. Danach liegt es bei Meta, nicht bei uns.
+export async function medienHochladen(base64) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return null;
+  try {
+    const bin = Buffer.from(String(base64), "base64");
+    if (!bin.length || bin.length > 4_000_000) return null;
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", "image/jpeg");
+    form.append("file", new Blob([bin], { type: "image/jpeg" }), "schaden.jpg");
+    const r = await fetch(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/media`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: form
+    });
+    if (!r.ok) {
+      console.error("upload", r.status, await r.text().catch(() => ""));
+      return null;
+    }
+    const j = await r.json();
+    return j.id || null;
+  } catch (e) {
+    console.error("upload", e);
+    return null;
+  }
+}
+
+// ---- Notweg per E-Mail --------------------------------------------
+// WhatsApp laesst frei formulierte Nachrichten nur innerhalb von 24
+// Stunden nach der letzten Nachricht des Empfaengers zu. Schreibt der
+// Inhaber laenger nichts, kaeme eine Terminmeldung sonst STILL nicht an.
+// Greift nur, wenn RESEND_API_KEY gesetzt ist - sonst passiert nichts.
+export async function sendMail(betreff, text) {
+  const key = process.env.RESEND_API_KEY;
+  const an = process.env.NOTFALL_MAIL || "schaden@alb.berlin";
+  if (!key) return false;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        from: process.env.MAIL_ABSENDER || "Alex <alex@autolackiererei-britz.de>",
+        to: [an],
+        subject: String(betreff).slice(0, 150),
+        text: String(text).slice(0, 8000)
+      })
+    });
+    if (!r.ok) console.error("mail", r.status, await r.text().catch(() => ""));
+    return r.ok;
+  } catch (e) {
+    console.error("mail", e);
+    return false;
+  }
+}
+
 export async function sendWA(to, body) {
   if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
   try {
@@ -121,6 +210,55 @@ function inhaberNummern() {
 const WOCHENTAGE = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
 const MONATE = ["Januar","Februar","März","April","Mai","Juni","Juli",
                 "August","September","Oktober","November","Dezember"];
+
+// ---- Kundenfotos an den Inhaber weiterleiten -----------------------
+// Dirk sieht die Werkstatt-Nummer nicht in seinem eigenen WhatsApp - die
+// Nachrichten laufen ueber die Schnittstelle zu Alex. Ohne diese
+// Weiterleitung bekaeme er Schadensfotos und Fahrzeugschein nie zu
+// Gesicht, obwohl er genau die fuer den Kostenvoranschlag braucht.
+//
+// Wichtig: Es wird nichts bei uns gespeichert. Bei WhatsApp-Kunden wird
+// nur die Medien-Kennung weitergereicht, bei Web-Chat-Fotos das Bild
+// einmal an WhatsApp uebergeben. Das Archiv bleibt bewusst aussen vor.
+export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, tel, hinweis }) {
+  const nummern = inhaberNummern();
+  if (!nummern.length) return false;
+
+  const wer = [
+    kanal === "whatsapp" ? "WhatsApp" : "Website-Chat",
+    name && name !== "Name nicht genannt" ? name : null,
+    tel || null
+  ].filter(Boolean).join(" · ");
+  const unterschrift = wer + (hinweis ? "\n" + String(hinweis).slice(0, 300) : "");
+
+  // Bei WhatsApp reicht die vorhandene Kennung, bei Web muss das Bild
+  // einmal hochgeladen werden.
+  let ids = Array.isArray(mediaIds) ? mediaIds.filter(Boolean) : [];
+  if (!ids.length && Array.isArray(base64Bilder)) {
+    for (const b of base64Bilder.slice(0, 4)) {
+      const id = await medienHochladen(b);
+      if (id) ids.push(id);
+    }
+  }
+  if (!ids.length) return false;
+
+  let zugestellt = false;
+  for (const n of nummern) {
+    for (let i = 0; i < ids.length; i++) {
+      const bu = ids.length > 1
+        ? unterschrift + "\n(Bild " + (i + 1) + " von " + ids.length + ")"
+        : unterschrift;
+      if (await sendWABild(n, ids[i], bu)) zugestellt = true;
+    }
+  }
+  if (!zugestellt) {
+    await sendMail("Kunde hat Fotos geschickt (WhatsApp nicht zustellbar)",
+      wer + "\n\n" + (hinweis || "") + "\n\n" +
+      ids.length + " Bild(er) konnten nicht per WhatsApp zugestellt werden. " +
+      "Schreiben Sie Alex kurz etwas, dann läuft es wieder über WhatsApp.");
+  }
+  return zugestellt;
+}
 
 export function datumLesbar(iso) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
@@ -214,16 +352,32 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
 
   const fuss = kanal === "whatsapp"
     ? "\nKam über: WhatsApp\n" +
-      "Ich kann dem Kunden hier direkt antworten.\n\n" +
-      "Schreiben Sie mir dazu:\n" +
+      "Bitte bestätigen, dann bekommt der Kunde die Zusage und einen\n" +
+      "Kalendereintrag zum Antippen. Schreiben Sie mir dazu:\n" +
       "• \"Termin " + nr + " passt\"\n" +
-      "• \"Termin " + nr + " lieber Donnerstag 10 Uhr\""
+      "• \"Termin " + nr + " lieber Donnerstag 10 Uhr\"\n" +
+      "Ohne Ihre Rückmeldung erhält der Kunde keine Bestätigung."
     : "\nKam über: Website-Chat\n" +
-      "Dort erreiche ich den Kunden nicht mehr.\n" +
-      "Bitte melden Sie sich selbst" +
-      (tel ? ", Nummer siehe oben." : ".");
+      "Den Kunden erreiche ich hier nicht mehr.\n" +
+      "Bitte melden Sie sich selbst zur Bestätigung" +
+      (tel ? ", Nummer siehe oben." : " (keine Nummer hinterlegt).");
 
-  for (const n of nummern) await sendWA(n, kopf + fuss);
+  const meldung = kopf + fuss;
+  let zugestellt = false;
+  for (const n of nummern) {
+    if (await sendWA(n, meldung)) zugestellt = true;
+  }
+  // Kam die Meldung bei niemandem an (meist: seit über 24 Stunden keine
+  // Nachricht vom Inhaber, WhatsApp blockt dann frei formulierte Texte),
+  // geht sie per E-Mail raus. Sonst ginge eine Terminanfrage still verloren.
+  if (!zugestellt) {
+    await sendMail("Neue Terminanfrage Nr. " + nr + " (WhatsApp nicht zustellbar)",
+      meldung + "\n\n――――――――――――\n" +
+      "Diese Meldung kam per E-Mail, weil WhatsApp sie nicht zustellen konnte. " +
+      "Das passiert, wenn seit mehr als 24 Stunden keine Nachricht an Alex " +
+      "geschickt wurde. Schreiben Sie Alex kurz etwas, dann läuft es wieder " +
+      "über WhatsApp.");
+  }
   return true;
 }
 
@@ -323,7 +477,16 @@ export async function tagesBriefing(inhaberNr) {
   const gruss = stunde < 11 ? "Guten Morgen" : (stunde < 18 ? "Guten Tag" : "Guten Abend");
 
   const liste = await jsonLesen("termine", []);
-  const offen = liste.filter(e => Date.now() - (e.ts || 0) < 7 * 86400000);
+  // Datensparsamkeit: Anfragen, die älter als 14 Tage sind, werden
+  // endgültig gelöscht (Name und Rufnummer inklusive). Alex sagt dem
+  // Kunden zu, dass die Nummer nur zur Terminabwicklung dient und ohne
+  // Auftrag wieder verschwindet - diese Löschung deckt genau das ab.
+  const AUFBEWAHRUNG = 14 * 86400000;
+  const gesaeubert = liste.filter(e => Date.now() - (e.ts || 0) < AUFBEWAHRUNG);
+  if (gesaeubert.length !== liste.length) {
+    await jsonSchreiben("termine", gesaeubert);
+  }
+  const offen = gesaeubert.filter(e => Date.now() - (e.ts || 0) < 7 * 86400000);
   if (!offen.length) {
     return gruss + ". Aktuell liegt nichts Offenes an.";
   }

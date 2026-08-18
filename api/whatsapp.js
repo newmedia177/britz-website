@@ -15,7 +15,7 @@
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
-         RE_TERMIN_OK, icsAdresse,
+         RE_TERMIN_OK, icsAdresse, leiteBilderWeiter,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -86,12 +86,14 @@ async function verarbeite(req) {
   // ---- Eingehende Nachricht lesen (Text oder Bild) ------------
   let text = "";
   const images = [];
+  const mediaIds = [];        // fuer die Weiterleitung an den Inhaber
   if (msg.type === "text") {
     text = (msg.text?.body || "").slice(0, 4000);
   } else if (msg.type === "image") {
     text = (msg.image?.caption || "(Foto vom Schaden)").slice(0, 4000);
     const img = await fetchWhatsAppMedia(msg.image?.id);
     if (img) images.push(img);
+    if (msg.image?.id) mediaIds.push(msg.image.id);
   } else {
     await sendWhatsApp(from,
       "Das Format kann ich hier leider nicht öffnen. Schicken Sie mir " +
@@ -257,6 +259,17 @@ async function verarbeite(req) {
   if (!chef) {
     await meldeTermin({ antwort: reply, kanal: "whatsapp", kundeNr: from,
                         thema: text, ersatzName: profilName });
+    // Schadensfotos und Fahrzeugschein an den Inhaber weiterleiten -
+    // ohne sie zu speichern. Nur die Kennung wird weitergereicht.
+    if (mediaIds.length) {
+      await leiteBilderWeiter({
+        kanal: "whatsapp",
+        mediaIds,
+        name: profilName,
+        tel: "+" + String(from),
+        hinweis: text.slice(0, 200)
+      });
+    }
   }
 
   // Bestaetigter Termin: Auf WhatsApp gibt es keine Karte mit Knoepfen.

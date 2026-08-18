@@ -7,7 +7,8 @@
 // Optional:    CLAUDE_MODEL (Standard: claude-sonnet-5)
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
-import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl } from "./_termin.mjs";
+import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
+         leiteBilderWeiter, RE_KONTAKT } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -159,6 +160,20 @@ export default async function handler(req, res) {
 
   // Terminanfrage an den Inhaber melden
   await meldeTermin({ antwort: answer, kanal: "web", thema: frage });
+
+  // Schadensfotos aus dem Web-Chat an den Inhaber weiterleiten. Sie
+  // kommen hier ohne WhatsApp-Kennung an und werden deshalb einmal an
+  // WhatsApp uebergeben. Gespeichert wird bei uns nichts.
+  if (images.length) {
+    const mK = String(answer || "").match(RE_KONTAKT);
+    await leiteBilderWeiter({
+      kanal: "web",
+      base64Bilder: images,
+      name: ((mK && mK[1]) || "").trim(),
+      tel: ((mK && mK[2]) || "").trim(),
+      hinweis: String(frage).slice(0, 200)
+    });
+  }
 }
 
 // ---- Selbstlernende Schleife: erkennt, was der Assistent NICHT wusste --
