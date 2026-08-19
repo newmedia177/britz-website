@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="de">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -769,11 +769,11 @@
       <div data-legalrow style="max-width:1160px;margin:0 auto;width:100%;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 24px">
         <div style="color:#57524a;font-size:13px">© {{ year }} Autolackiererei in Britz<span data-cpext>&nbsp;· Meisterbetrieb</span></div>
         <nav data-legalbar aria-label="Rechtliches" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px">
-          <a href="rechtliches.html#impressum" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17">Impressum</a>
+          <a href="/rechtliches#impressum" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17">Impressum</a>
           <span data-lgsep aria-hidden="true">|</span>
-          <a href="rechtliches.html#datenschutz" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17"><span data-lgfull>Datenschutzerklärung</span><span data-lgshort>Datenschutz</span></a>
+          <a href="/rechtliches#datenschutz" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17"><span data-lgfull>Datenschutzerklärung</span><span data-lgshort>Datenschutz</span></a>
           <span data-lgsep aria-hidden="true">|</span>
-          <a href="rechtliches.html#cookies" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17"><span data-lgfull>Cookie-Richtlinien</span><span data-lgshort>Cookies</span></a>
+          <a href="/rechtliches#cookies" style="text-decoration:none;color:#57524a;font-size:13px;transition:color .18s ease" style-hover="color:#211d17"><span data-lgfull>Cookie-Richtlinien</span><span data-lgshort>Cookies</span></a>
         </nav>
         <span data-version aria-label="Version"></span>
       </div>
@@ -1586,7 +1586,7 @@ class Component extends DCLogic {
    Fortschritt an. In einer neuen Kalenderwoche wieder bei 1 anfangen.
    Frueher wurde die Ziffer aus dem Datum abgeleitet; sie wechselte
    dadurch von allein und sagte nichts ueber Aenderungen aus. */
-var AUSGABE = 7;   // 18.08.2026: Ruhezeiten, Vorlauf, Kalkulationsdaten
+var AUSGABE = 8;   // 19.08.2026: SEO-Feinschliff, Google-Verifizierung
 (function () {
   function stand(jetzt) {
     var d = new Date(Date.UTC(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate()));
@@ -1944,7 +1944,7 @@ var AUSGABE = 7;   // 18.08.2026: Ruhezeiten, Vorlauf, Kalkulationsdaten
   <div class="cc-innen">
     <p class="cc-titel" id="cc-titel">Dürfen wir mitzählen?</p>
     <p class="cc-text" id="cc-text">Wir würden gern anonym erfassen, welche Seiten gelesen werden — damit wir sie besser machen können. Nur mit Ihrer Zustimmung. Ohne sie funktioniert die Seite genauso.
-      <a href="rechtliches.html#cookies">Mehr dazu</a></p>
+      <a href="/rechtliches#cookies">Mehr dazu</a></p>
     <div class="cc-knoepfe">
       <button class="cc-btn cc-ja" id="cc-ja" type="button">Einverstanden</button>
       <button class="cc-btn cc-nein" id="cc-nein" type="button">Nur das Nötige</button>
