@@ -13,10 +13,10 @@
 // Webhook-URL in der Meta-App: https://<eure-domain>/api/whatsapp
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
-import { logGapIfNeeded, saeubern, zeitKontext } from "./chat.js";
+import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
-         warteschlangeZustellen, kvaNotiz,
+         warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -307,11 +307,27 @@ async function verarbeite(req) {
       icsAdresse(mOk[1].trim(), mOk[2].trim(), mOk[3].trim());
   }
 
+  // Rohfassung MIT Markern fuer den Verlauf: So sieht der Assistent
+  // beim naechsten Zug, dass er die Daten schon weitergegeben hat.
+  const rohAntwort = String(reply);
+  const hatteDaten = RE_KONTAKT.test(rohAntwort) || RE_KVA.test(rohAntwort) ||
+                     RE_TERMIN.test(rohAntwort);
+
   reply = markerRaus(reply);
 
   // Gedankenstriche und Ausrufezeichen entfernen (wirken maschinell)
   reply = saeubern(reply, true).trim();
-  if (!reply) reply = "Können Sie das noch einmal anders formulieren?";
+  // Leere Antwort: Hat das Modell nur Marker geschickt, ist das ein
+  // Abschluss ohne Worte. Dann sagen wir dem Kunden, was jetzt passiert,
+  // und fragen NICHT "anders formulieren" (das waere nach gelieferten
+  // Daten ein Schlag ins Gesicht).
+  if (!reply) {
+    reply = hatteDaten
+      ? "Danke, das habe ich alles notiert und gebe es an Dirk weiter. " +
+        "Er kalkuliert unverbindlich und meldet sich " + RUECKMELDUNG + " hier. " +
+        "Sie müssen nichts weiter tun."
+      : "Können Sie das noch einmal anders formulieren?";
+  }
   if (kalenderZeile) reply += kalenderZeile;
 
   await sendeMenschlich(from, reply);
@@ -321,7 +337,7 @@ async function verarbeite(req) {
   await memSet(from, [...messages.map(m => ({
     role: m.role,
     content: typeof m.content === "string" ? m.content : text
-  })), { role: "assistant", content: reply }].slice(-MAX_TURNS));
+  })), { role: "assistant", content: hatteDaten ? rohAntwort : reply }].slice(-MAX_TURNS));
 }
 
 // ---- Menschlich wirkendes Senden ----------------------------------

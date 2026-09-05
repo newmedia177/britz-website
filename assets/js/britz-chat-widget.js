@@ -698,7 +698,10 @@
       var mOk = txt.match(reOk);
       var m = mOk || txt.match(re);
       var bestaetigt = !!mOk;
+      // Alle technischen Marker entfernen, auch kuenftige: alles nach
+      // dem Muster [[GROSSBUCHSTABEN|...]] ist nie fuer den Kunden.
       var clean = txt.replace(reOk, "").replace(re, "").replace(reK, "")
+                     .replace(/\[\[[A-Z_]+\|[^\]]*\]\]/g, "")
                      .replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "").trim();
       linkify(node, clean);
       if (!m) return clean;
@@ -820,12 +823,25 @@
       startTyping();
 
       try {
+        // Zeitlimit auf Kundenseite. Der Server hat eigene Limits, aber
+        // wenn die Verbindung selbst haengt, hilft nur ein Abbruch hier.
+        var ac = window.AbortController ? new AbortController() : null;
+        var wachhund = null;
+        function wache(ms) {
+          if (!ac) return;
+          clearTimeout(wachhund);
+          wachhund = setTimeout(function () { ac.abort(); }, ms);
+        }
+        wache(35000);   // bis die Kopfzeile da ist
+
         var res = await fetch(CONFIG.apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, images: imgs })
+          body: JSON.stringify({ messages: history, images: imgs }),
+          signal: ac ? ac.signal : undefined
         });
         if (!res.ok) throw new Error("HTTP " + res.status);
+        wache(30000);   // ab jetzt: laengste Pause zwischen zwei Stuecken
 
         setState("answering", "Antwortet");
         typingMsg.style.padding = "";
@@ -839,8 +855,19 @@
         typingMsg.appendChild(liveDots);
 
         var reader = res.body.getReader();
-        var dec = new TextDecoder(), buf = "", full = "", pending = "", shown = 0;
+        var dec = new TextDecoder(), buf = "", full = "", pending = "", roh = "", shown = 0;
         var streamDone = false;
+
+        // Technische Marker ([[KONTAKT|...]], [[KVA|...]], [[TERMIN|...]])
+        // duerfen beim Tippen nie sichtbar werden. Fertige Marker werden
+        // entfernt, ein angefangener ("[[KONT") wird zurueckgehalten,
+        // bis er komplett ist.
+        function ohneMarker(s) {
+          s = s.replace(/\[\[[A-Z_]+\|[^\]]*\]\]/g, "");
+          var offen = s.lastIndexOf("[[");
+          if (offen !== -1 && s.indexOf("]]", offen) === -1) s = s.slice(0, offen);
+          return s;
+        }
 
         // Nachbartasten fuer realistische Vertipper
         var NEAR = {
@@ -874,19 +901,23 @@
             while (true) {
               var r = await reader.read();
               if (r.done) break;
+              wache(30000);   // Lebenszeichen: Wachhund neu stellen
               buf += dec.decode(r.value, { stream: true });
               var lines = buf.split("\n"); buf = lines.pop();
               lines.forEach(function (line) {
                 if (line.indexOf("data: ") === 0) {
                   var d = line.slice(6);
                   if (d !== "[DONE]") {
-                    try { pending += JSON.parse(d); } catch (_) { pending += d; }
+                    try { roh += JSON.parse(d); } catch (_) { roh += d; }
                   }
                 }
               });
+              pending = ohneMarker(roh);
             }
           } catch (_) { /* Abbruch wird unten behandelt */ }
+          pending = ohneMarker(roh);
           streamDone = true;
+          clearTimeout(wachhund);
         })();
 
         await new Promise(function (fertig) {
@@ -923,16 +954,35 @@
 
         clearTimeout(typer); typer = null;
         liveDots.remove();
-        full = pending;
-        full = handleTermin(typingMsg, full);
+        // Terminkarte aus dem ROHTEXT bauen (dort stehen die Marker),
+        // angezeigt wird der bereinigte Text.
+        full = handleTermin(typingMsg, roh);
+        // Nie eine leere Blase stehen lassen. Kommt trotz allem nichts
+        // Sichtbares an, steht hier ein ehrlicher Satz statt Stille.
+        if (!full.trim()) {
+          full = "Ich habe alles notiert und gebe es an das Team weiter. " +
+                 "Falls Sie nichts mehr von uns h\u00f6ren, erreichen Sie uns " +
+                 "unter 030 607 97 930.";
+          linkify(typingMsg, full);
+        }
         log.scrollTop = log.scrollHeight;
-        history.push({ role: "assistant", content: full });
+        // Der Verlauf enthaelt den Rohtext MIT Markern: So sieht der
+        // Assistent beim naechsten Zug, dass er die Daten schon
+        // weitergegeben hat, und setzt sie nicht erneut.
+        history.push({ role: "assistant", content: roh || full });
       } catch (e) {
         if (typer) { clearTimeout(typer); typer = null; }
+        if (typeof wachhund !== "undefined") clearTimeout(wachhund);
         typingMsg.style.padding = "";
-        typingMsg.textContent = "Entschuldigung, gerade ist keine " +
-          "Verbindung m\u00f6glich. Sie erreichen uns direkt unter " +
-          "030 607 97 930 (Mo\u2013Do 8\u201317, Fr 8\u201315 Uhr).";
+        typingMsg.innerHTML = "";
+        var abgebrochen = e && (e.name === "AbortError");
+        typingMsg.textContent = abgebrochen
+          ? "Das dauert gerade l\u00e4nger als normal. Bitte schicken Sie " +
+            "Ihre letzte Nachricht noch einmal, oder rufen Sie uns an: " +
+            "030 607 97 930 (Mo\u2013Do 8\u201317, Fr 8\u201315 Uhr)."
+          : "Entschuldigung, gerade ist keine " +
+            "Verbindung m\u00f6glich. Sie erreichen uns direkt unter " +
+            "030 607 97 930 (Mo\u2013Do 8\u201317, Fr 8\u201315 Uhr).";
       } finally {
         busy = false; updateSend();
         setState("", engaged || istGeschaeftszeit() ? "Online" : "Bald zur\u00fcck");
@@ -945,14 +995,21 @@
       markEngaged();
       if (panel.classList.contains("open")) {
         panel.classList.remove("open");
+        document.documentElement.classList.remove("alb-chat-offen");
       } else {
         panel.classList.add("open");
+        // Solange der Chat offen ist, weicht der Cookie-Banner (index.html),
+        // sonst deckt er auf dem Handy das Eingabefeld ab.
+        document.documentElement.classList.add("alb-chat-offen");
         panel.scrollTop = 0;
         try { text.focus({ preventScroll: true }); } catch (e) { text.focus(); }
         panel.scrollTop = 0;
       }
     };
-    $("albClose").onclick = function () { panel.classList.remove("open"); };
+    $("albClose").onclick = function () {
+      panel.classList.remove("open");
+      document.documentElement.classList.remove("alb-chat-offen");
+    };
     sendB.onclick = function () { send(); };
     text.addEventListener("input", function () { autoGrow(); updateSend(); });
     text.addEventListener("keydown", function (e) {

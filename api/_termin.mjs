@@ -53,16 +53,31 @@ export function speicherToken() {
          process.env.KV_REST_API_TOKEN || "";
 }
 
+// Zeitlimit fuer alle Netzaufrufe. Ohne Limit kann ein haengender
+// Dienst die ganze Antwort blockieren; das Widget sieht dann nur
+// "Antwortet" und am Ende eine leere Blase.
+export async function fetchMitZeit(url, optionen, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    return await fetch(url, { ...(optionen || {}), signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+const SPEICHER_ZEITLIMIT_MS = 4000;
+const NETZ_ZEITLIMIT_MS = 10000;   // WhatsApp, Resend
+
 export async function redis(...befehl) {
   const url = speicherUrl();
   const tok = speicherToken();
   if (!url || !tok) return undefined;
   try {
-    const r = await fetch(url, {
+    const r = await fetchMitZeit(url, {
       method: "POST",
       headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" },
       body: JSON.stringify(befehl.map(String))
-    });
+    }, SPEICHER_ZEITLIMIT_MS);
     if (!r.ok) {
       console.error("upstash", r.status, await r.text().catch(() => ""));
       return undefined;
@@ -95,7 +110,7 @@ export async function sendWABild(to, mediaId, unterschrift) {
   if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
   if (!mediaId) return false;
   try {
-    const r = await fetch(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -108,7 +123,7 @@ export async function sendWABild(to, mediaId, unterschrift) {
         type: "image",
         image: { id: String(mediaId), caption: String(unterschrift || "").slice(0, 1000) }
       })
-    });
+    }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) console.error("sendBild", r.status, await r.text().catch(() => ""));
     return r.ok;
   } catch (e) {
@@ -128,11 +143,11 @@ export async function medienHochladen(base64) {
     form.append("messaging_product", "whatsapp");
     form.append("type", "image/jpeg");
     form.append("file", new Blob([bin], { type: "image/jpeg" }), "schaden.jpg");
-    const r = await fetch(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/media`, {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/media`, {
       method: "POST",
       headers: { authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
       body: form
-    });
+    }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) {
       console.error("upload", r.status, await r.text().catch(() => ""));
       return null;
@@ -155,7 +170,7 @@ export async function sendMail(betreff, text) {
   const an = process.env.NOTFALL_MAIL || "schaden@alb.berlin";
   if (!key) return false;
   try {
-    const r = await fetch("https://api.resend.com/emails", {
+    const r = await fetchMitZeit("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -167,7 +182,7 @@ export async function sendMail(betreff, text) {
         subject: String(betreff).slice(0, 150),
         text: String(text).slice(0, 8000)
       })
-    });
+    }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) console.error("mail", r.status, await r.text().catch(() => ""));
     return r.ok;
   } catch (e) {
@@ -179,7 +194,7 @@ export async function sendMail(betreff, text) {
 export async function sendWA(to, body) {
   if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
   try {
-    const r = await fetch(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -192,7 +207,7 @@ export async function sendWA(to, body) {
         type: "text",
         text: { preview_url: false, body: String(body).slice(0, 4000) }
       })
-    });
+    }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) console.error("send", r.status, await r.text().catch(() => ""));
     return r.ok;
   } catch (e) {
@@ -223,6 +238,21 @@ const MONATE = ["Januar","Februar","März","April","Mai","Juni","Juli",
 // Wichtig: Es wird nichts bei uns gespeichert. Bei WhatsApp-Kunden wird
 // nur die Medien-Kennung weitergereicht, bei Web-Chat-Fotos das Bild
 // einmal an WhatsApp uebergeben. Das Archiv bleibt bewusst aussen vor.
+// Rufnummer auf Plausibilitaet pruefen. Deutsche Nummern haben nach
+// dem Normalisieren (ohne fuehrende 0 bzw. +49) etwa 9 bis 12 Ziffern;
+// Mobilfunk 15x/16x/17x. Wir blockieren NIE, wir warnen nur.
+export function rufnummerPruefen(roh) {
+  const nurZiffern = String(roh || "").replace(/[^\d+]/g, "");
+  if (!nurZiffern) return { ok: false, hinweis: "" };
+  let n = nurZiffern.replace(/^\+/, "");
+  if (n.startsWith("0049")) n = n.slice(4);
+  else if (n.startsWith("49") && n.length > 11) n = n.slice(2);
+  else if (n.startsWith("0")) n = n.slice(1);
+  if (n.length < 9)  return { ok: false, hinweis: "Nummer wirkt zu kurz" };
+  if (n.length > 12) return { ok: false, hinweis: "Nummer wirkt zu lang, bitte prüfen" };
+  return { ok: true, hinweis: "" };
+}
+
 // Die vier Kalkulationsangaben als kurze Notiz, damit sie auch bei
 // reinen Kostenvoranschlag-Anfragen (ohne Termin) beim Inhaber landen.
 export function kvaNotiz(antwort) {
@@ -242,7 +272,7 @@ export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, t
   const wer = [
     kanal === "whatsapp" ? "WhatsApp" : "Website-Chat",
     name && name !== "Name nicht genannt" ? name : null,
-    tel || null
+    tel ? tel + (rufnummerPruefen(tel).hinweis ? " (" + rufnummerPruefen(tel).hinweis + ")" : "") : null
   ].filter(Boolean).join(" · ");
   const unterschrift = wer + (hinweis ? "\n" + String(hinweis).slice(0, 300) : "");
 
@@ -474,7 +504,9 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
     "Neue Terminanfrage Nr. " + nr + "\n" +
     "――――――――――――\n" +
     "Kunde: " + eintrag.name + "\n" +
-    (tel ? "Telefon: " + tel + "\n" : "") +
+    (tel ? "Telefon: " + tel +
+       (rufnummerPruefen(tel).hinweis ? " (" + rufnummerPruefen(tel).hinweis + ")" : "") +
+       "\n" : "") +
     "Wunschtermin: " + datumLesbar(eintrag.wann) + "\n" +
     (thema ? "Anliegen: " + String(thema).slice(0, 140) + "\n" : "") +
     (kvaArt  ? "Schadensart: " + kvaArt.slice(0, 60) + "\n" : "") +

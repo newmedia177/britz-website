@@ -40,7 +40,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="assets/js/image-slot.js?v=20260817b"></script>
-<script src="assets/js/britz-chat-widget.js?v=20260817b"></script>
+<script src="assets/js/britz-chat-widget.js?v=20260905a"></script>
 <style>
   *{box-sizing:border-box}
   html{scroll-behavior:smooth;scroll-padding-top:84px}
@@ -1586,7 +1586,7 @@ class Component extends DCLogic {
    Fortschritt an. In einer neuen Kalenderwoche wieder bei 1 anfangen.
    Frueher wurde die Ziffer aus dem Datum abgeleitet; sie wechselte
    dadurch von allein und sagte nichts ueber Aenderungen aus. */
-var AUSGABE = 8;   // 19.08.2026: SEO-Feinschliff, Google-Verifizierung
+var AUSGABE = 1;   // 05.09.2026 (KW 36): Lead-Abschluss, Zeitlimits, Marker-Fix, Banner
 (function () {
   function stand(jetzt) {
     var d = new Date(Date.UTC(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate()));
@@ -1888,6 +1888,9 @@ var AUSGABE = 8;   // 19.08.2026: SEO-Feinschliff, Google-Verifizierung
     opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .5s ease;
     overflow:hidden}
   .cc-karte.cc-da{opacity:1;transform:none}
+  /* Chat offen: Banner ausblenden, damit er das Eingabefeld nicht verdeckt.
+     Er kommt wieder, sobald der Chat geschlossen wird. */
+  html.alb-chat-offen .cc-karte{opacity:0;pointer-events:none}
   .cc-karte[hidden]{display:none}
   .cc-linie{height:2px;background:#f2ab00}
   .cc-innen{padding:22px 22px 18px}

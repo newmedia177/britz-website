@@ -10,9 +10,37 @@ import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
-         kvaNotiz } from "./_termin.mjs";
+         kvaNotiz, fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
+
+// ---- Zeitlimits ---------------------------------------------------
+// Das Widget bekommt die 200-Kopfzeile sofort und wartet dann auf Text.
+// Ohne diese Limits konnte ein haengender Dienst 60 s Stille erzeugen,
+// und der Kunde sah nur "Antwortet" und am Ende eine leere Blase.
+const MODELL_START_MS   = 25000;  // bis die Antwort zu fliessen beginnt
+const STROM_LEERLAUF_MS = Number(process.env.TEST_LEERLAUF_MS) || 20000;  // laengste Pause zwischen zwei Stuecken
+
+// ---- Notsaetze ----------------------------------------------------
+// ANNAHME (bitte mit Dirk abstimmen): Rueckmeldezeit fuer den
+// Kostenvoranschlag. Steht hier zentral, damit sie an einer Stelle
+// geaendert werden kann.
+export const RUECKMELDUNG = "in der Regel am nächsten Werktag";
+
+const NICHT_ERREICHBAR =
+  "Entschuldigung, ich bin gerade nicht erreichbar. " +
+  "Rufen Sie uns gern direkt an: 030 607 97 930 (Mo–Do 8–17, Fr 8–15 Uhr).";
+
+// Nach der letzten eingesammelten Angabe, falls das Modell nur die
+// Marker geschickt hat und kein Wort dazu.
+const ABSCHLUSS_NOTSATZ =
+  "Danke, das habe ich alles notiert und gebe es an Dirk weiter. " +
+  "Er kalkuliert unverbindlich und meldet sich " + RUECKMELDUNG + ". " +
+  "Sie müssen nichts weiter tun.";
+
+// Leere Antwort ohne erkennbare Daten
+const NACHFASS_NOTSATZ =
+  "Ich bin da. Womit kann ich weiterhelfen?";
 
 const MAX_TURNS = 20;        // Verlaufslänge begrenzen
 const MAX_CHARS = 4000;      // pro Nachricht
@@ -75,7 +103,7 @@ export default async function handler(req, res) {
 
   let upstream;
   try {
-    upstream = await fetch("https://api.anthropic.com/v1/messages", {
+    upstream = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -99,27 +127,31 @@ export default async function handler(req, res) {
         messages,
         stream: true
       })
-    });
+    }, MODELL_START_MS);
   } catch (e) {
-    sseWrite(res, "Entschuldigung, ich bin gerade nicht erreichbar. " +
-      "Rufen Sie uns gern direkt an: 030 607 97 930 (Mo–Do 8–17, Fr 8–15 Uhr).");
+    console.error("Anthropic fetch", e && e.name, e && e.message);
+    sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
 
   if (!upstream.ok) {
     console.error("Anthropic API", upstream.status, await upstream.text().catch(() => ""));
-    sseWrite(res, "Entschuldigung, ich bin gerade nicht erreichbar. " +
-      "Rufen Sie uns gern direkt an: 030 607 97 930 (Mo–Do 8–17, Fr 8–15 Uhr).");
+    sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
 
-  // Anthropic-SSE parsen und nur die Text-Deltas ans Widget reichen
+  // Anthropic-SSE parsen und nur die Text-Deltas ans Widget reichen.
+  // Jeder einzelne Lesevorgang hat ein Zeitlimit: bleibt der Strom
+  // haengen, brechen wir ab und schicken einen Notsatz statt Stille.
   const reader = upstream.body.getReader();
   const dec = new TextDecoder();
-  let buf = "", answer = "", zurueck = "";
+  let buf = "", answer = "", zurueck = "", abgebrochen = false;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([
+        reader.read(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("stream idle")), STROM_LEERLAUF_MS))
+      ]);
       if (done) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split("\n");
@@ -144,13 +176,37 @@ export default async function handler(req, res) {
       }
     }
   } catch (e) {
-    console.error("stream error", e);
+    console.error("stream error", e && e.message);
+    abgebrochen = true;
+    try { reader.cancel(); } catch (_) {}
   }
   // Zurückgehaltenen Rest noch ausgeben
   if (zurueck) {
     const sauber = saeubern(zurueck, answer.length === 0).replace(/\s+$/, "");
     if (sauber) { answer += sauber; sseWrite(res, sauber); }
   }
+
+  // GARANTIE: Der Kunde bekommt IMMER sichtbaren Text. Zwei Faelle,
+  // in denen sonst eine leere Blase stuende:
+  //  (a) Der Strom ist abgebrochen oder blieb leer.
+  //  (b) Die Antwort besteht nur aus Markern ([[KONTAKT]], [[KVA]],
+  //      [[TERMIN]]), die das Widget entfernt. Passiert gern nach der
+  //      letzten eingesammelten Angabe: Daten notiert, kein Wort dazu.
+  const sichtbar = markerRaus(answer).trim();
+  if (!sichtbar) {
+    const hatDaten = RE_KONTAKT.test(answer) || RE_KVA.test(answer) || RE_TERMIN.test(answer);
+    const notsatz = abgebrochen && !answer
+      ? NICHT_ERREICHBAR
+      : (hatDaten ? ABSCHLUSS_NOTSATZ : NACHFASS_NOTSATZ);
+    answer = notsatz + "\n" + answer;
+    sseWrite(res, notsatz);
+  } else if (abgebrochen) {
+    // Mitten im Satz abgerissen: sauber zu Ende bringen
+    const schluss = " Kurz zusammengefasst: Ich habe alles notiert und gebe es an Dirk weiter. Sie müssen nichts weiter tun.";
+    answer += schluss;
+    sseWrite(res, schluss);
+  }
+
   res.write("data: [DONE]\n\n");
   res.end();
 
