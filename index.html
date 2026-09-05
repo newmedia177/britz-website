@@ -1579,14 +1579,14 @@ class Component extends DCLogic {
 
 <script>
 /* Versionsnummer im Footer: Jahr und Kalenderwoche nach ISO 8601,
-   dahinter die Ausgabe innerhalb der Woche.
+   dahinter die laufende Ausgabe.
 
-   WICHTIG: AUSGABE wird von Hand gesetzt, nicht berechnet. Bei jedem
-   groesseren Update um eins hochzaehlen - so zeigt die Nummer echten
-   Fortschritt an. In einer neuen Kalenderwoche wieder bei 1 anfangen.
-   Frueher wurde die Ziffer aus dem Datum abgeleitet; sie wechselte
-   dadurch von allein und sagte nichts ueber Aenderungen aus. */
-var AUSGABE = 1;   // 05.09.2026 (KW 36): Lead-Abschluss, Zeitlimits, Marker-Fix, Banner
+   WICHTIG: AUSGABE wird von Hand gesetzt, nicht berechnet, und zaehlt
+   NUR HOCH - nie zuruecksetzen, auch nicht in einer neuen Woche. So ist
+   jede groessere Aenderung als Fortschritt sichtbar (34.8 -> 36.9), und
+   die Zahl geht nie rueckwaerts. Bei jedem groesseren Update um eins
+   erhoehen und hinten kurz notieren, worum es ging. */
+var AUSGABE = 9;   // 05.09.2026: Lead-Abschluss, Zeitlimits, Marker-Fix, Banner  (vorher 8 am 19.08.)
 (function () {
   function stand(jetzt) {
     var d = new Date(Date.UTC(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate()));
