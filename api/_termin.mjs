@@ -216,7 +216,7 @@ export async function sendWA(to, body) {
   }
 }
 
-function inhaberNummern() {
+export function inhaberNummern() {
   return (process.env.OWNER_NUMBERS || "")
     .split(",").map(s => s.replace(/\D/g, "")).filter(Boolean);
 }

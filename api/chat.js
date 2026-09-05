@@ -7,6 +7,7 @@
 // Optional:    CLAUDE_MODEL (Standard: claude-sonnet-5)
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
+import { gespraechAblegen, lernrunde, gelerntBlock } from "./_lernen.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
@@ -99,7 +100,7 @@ export default async function handler(req, res) {
     "Connection": "keep-alive"
   });
 
-  const notesBlock = await ownerNotesBlock();
+  const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock());
 
   let upstream;
   try {
@@ -218,6 +219,19 @@ export default async function handler(req, res) {
 
   // Zurueckgehaltene Nachtmeldungen zustellen (nur in der Buerozeit)
   await warteschlangeZustellen().catch(() => {});
+
+  // Gespraech anonymisiert ablegen; nach LERN_INTERVALL neuen
+  // Gespraechen laeuft die Lernrunde (Vorschlaege an Dirk, nichts
+  // wird ohne Freigabe uebernommen).
+  const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
+  try {
+    const faellig = await gespraechAblegen({
+      kennung: sitzung, kanal: "web",
+      verlauf: [...raw.slice(-MAX_TURNS).map(m => ({ role: m.role, content: m.content })),
+                { role: "assistant", content: answer }]
+    });
+    if (faellig) await lernrunde();
+  } catch (e) { console.error("lernen", e && e.message); }
 
   // Terminanfrage an den Inhaber melden
   await meldeTermin({ antwort: answer, kanal: "web", thema: frage });

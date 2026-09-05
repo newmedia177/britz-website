@@ -13,6 +13,7 @@
 // Webhook-URL in der Meta-App: https://<eure-domain>/api/whatsapp
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
+import { gespraechAblegen, lernrunde, gelerntBlock, lernBefehl } from "./_lernen.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
@@ -137,7 +138,7 @@ async function verarbeite(req) {
     content: typeof m.content === "string" ? m.content : text
   })));
 
-  const notesBlock = await ownerNotesBlock();
+  const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock());
 
   // Schreibt der Inhaber, arbeitet Alex als sein Assistent statt als
   // Kundenberater. Dafuer bekommt er den Stand der offenen Anfragen mit.
@@ -338,6 +339,21 @@ async function verarbeite(req) {
     role: m.role,
     content: typeof m.content === "string" ? m.content : text
   })), { role: "assistant", content: hatteDaten ? rohAntwort : reply }].slice(-MAX_TURNS));
+
+  // Lernen: Gespraech anonymisiert ablegen (Kennung = gehashte Nummer,
+  // nie die Nummer selbst). Nach LERN_INTERVALL Gespraechen Lernrunde.
+  if (!chef) {
+    try {
+      let hsh = 0;
+      for (const c of String(from)) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
+      const faellig = await gespraechAblegen({
+        kennung: "wa" + hsh.toString(36), kanal: "whatsapp",
+        verlauf: [...messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : text })),
+                  { role: "assistant", content: rohAntwort }]
+      });
+      if (faellig) await lernrunde();
+    } catch (e) { console.error("lernen", e && e.message); }
+  }
 }
 
 // ---- Menschlich wirkendes Senden ----------------------------------
@@ -460,6 +476,11 @@ async function handleOwnerCommand(from, text) {
 
   // "3 passt" -> Rueckmeldung zu Terminanfrage Nr. 3
   if (await inhaberAntwort(from, t)) return true;
+
+  // Lernrunde: "Lernen", "Lernen 3 ok/nein", "Gelernt", "Vergiss gelernt 2",
+  // "Lernexport", "Lernrunde"
+  const lern = await lernBefehl(t);
+  if (lern) { await sendWhatsApp(from, lern); return true; }
 
   // "Lösche Termin 3", "Termin 3 löschen", "Lösche alle Termine",
   // "Termin löschen" (ohne Nummer -> wenn nur einer offen ist)
@@ -601,7 +622,11 @@ async function handleOwnerCommand(from, text) {
       "• Lücken leeren – Liste zurücksetzen\n" +
       "• Termine – offene Terminanfragen\n" +
       "• Termin 3 passt – Rückmeldung zu Anfrage Nr. 3\n" +
-      "• Lösche Termin 3 – Anfrage aus der Liste nehmen");
+      "• Lösche Termin 3 – Anfrage aus der Liste nehmen\n" +
+      "• Lernen – offene Lernvorschläge aus der Auswertung\n" +
+      "• Lernen 3 ok / Lernen 3 nein – freigeben oder verwerfen\n" +
+      "• Gelernt – aktive gelernte Regeln (Vergiss gelernt 2 entfernt)\n" +
+      "• Lernrunde – Auswertung jetzt anstoßen");
     return true;
   }
   if ((m = t.match(/^vergiss (nummer |notiz )?(\d+)/i))) {

@@ -793,6 +793,11 @@
       return clean;
     }
 
+    // Zufaellige Sitzungskennung, nur im Speicher dieser Seite. Dient dem
+    // Server dazu, die Zuege eines Gespraechs zusammenzuhalten. Kein
+    // Cookie, nichts Wiedererkennbares ueber die Sitzung hinaus.
+    var SITZUNG = "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
     async function send(msg) {
       if (busy) return;
       msg = (msg || text.value).trim();
@@ -837,7 +842,7 @@
         var res = await fetch(CONFIG.apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, images: imgs }),
+          body: JSON.stringify({ messages: history, images: imgs, sitzung: SITZUNG }),
           signal: ac ? ac.signal : undefined
         });
         if (!res.ok) throw new Error("HTTP " + res.status);
