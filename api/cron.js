@@ -13,6 +13,7 @@
 //      WhatsApp sie nicht annimmt (24-Stunden-Fenster von Meta).
 
 import { warteschlangeZustellen, offeneGespraecheMelden } from "./_termin.mjs";
+import { weckerAufgaben } from "./_anfragen.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -28,7 +29,12 @@ export default async function handler(req, res) {
     }
   }
 
-  const ergebnis = { zugestellt: false, offene: 0 };
+  const ergebnis = { zugestellt: false, offene: 0, aufgaben: [] };
+  try {
+    ergebnis.aufgaben = await weckerAufgaben();   // Briefing, Wochenbericht, Erinnerungen
+  } catch (e) {
+    console.error("cron aufgaben", e && e.message);
+  }
   try {
     ergebnis.zugestellt = await warteschlangeZustellen();
   } catch (e) {

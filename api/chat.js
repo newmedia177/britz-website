@@ -8,6 +8,7 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, lernrunde, gelerntBlock } from "./_lernen.mjs";
+import { anfrageFortschreiben, fehlerZaehlen, uebergabeAnWhatsApp } from "./_anfragen.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
@@ -132,12 +133,14 @@ export default async function handler(req, res) {
     }, MODELL_START_MS);
   } catch (e) {
     console.error("Anthropic fetch", e && e.name, e && e.message);
+    fehlerZaehlen("modell").catch(() => {});
     sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
 
   if (!upstream.ok) {
     console.error("Anthropic API", upstream.status, await upstream.text().catch(() => ""));
+    fehlerZaehlen("modell").catch(() => {});
     sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
@@ -195,7 +198,9 @@ export default async function handler(req, res) {
   //      [[TERMIN]]), die das Widget entfernt. Passiert gern nach der
   //      letzten eingesammelten Angabe: Daten notiert, kein Wort dazu.
   const sichtbar = markerRaus(answer).trim();
+  if (abgebrochen) fehlerZaehlen("strom").catch(() => {});
   if (!sichtbar) {
+    if (!abgebrochen) fehlerZaehlen("leer").catch(() => {});
     const hatDaten = RE_KONTAKT.test(answer) || RE_KVA.test(answer) || RE_TERMIN.test(answer);
     const notsatz = abgebrochen && !answer
       ? NICHT_ERREICHBAR
@@ -240,6 +245,16 @@ export default async function handler(req, res) {
 
   // Offenes Gespraech mitfuehren: Bricht der Kunde ab, meldet der
   // Wecker (api/cron.js) das dem Inhaber samt allem, was bekannt ist.
+  const akte = await anfrageFortschreiben({
+    sitzung, kanal: "web", antwort: answer,
+    kundentext: String(frage || ""), fotos: images.length
+  }).catch(() => null);
+  // Nummer genannt -> Gespraech auf WhatsApp weiterfuehren (nur mit
+  // genehmigter Meta-Vorlage; sonst bleibt es still und Dirk hat die
+  // Nummer in der Akte).
+  if (akte && akte.tel && !akte.uebergeben) {
+    uebergabeAnWhatsApp(akte).catch(() => {});
+  }
   const mKon = String(answer || "").match(RE_KONTAKT);
   await gespraechMerken({
     sitzung, kanal: "web",

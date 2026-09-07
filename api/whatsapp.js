@@ -14,6 +14,7 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, lernrunde, gelerntBlock, lernBefehl } from "./_lernen.mjs";
+import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen } from "./_anfragen.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
@@ -139,7 +140,8 @@ async function verarbeite(req) {
     content: typeof m.content === "string" ? m.content : text
   })));
 
-  const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock());
+  const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock()) +
+                     (chef ? "" : await akteKontext(from).catch(() => ""));
 
   // Schreibt der Inhaber, arbeitet Alex als sein Assistent statt als
   // Kundenberater. Dafuer bekommt er den Stand der offenen Anfragen mit.
@@ -324,6 +326,7 @@ async function verarbeite(req) {
   // und fragen NICHT "anders formulieren" (das waere nach gelieferten
   // Daten ein Schlag ins Gesicht).
   if (!reply) {
+    await fehlerZaehlen("leer").catch(() => {});
     reply = hatteDaten
       ? "Danke, das habe ich alles notiert und gebe es an Dirk weiter. " +
         "Er kalkuliert unverbindlich und meldet sich " + RUECKMELDUNG + " hier. " +
@@ -347,6 +350,10 @@ async function verarbeite(req) {
     // Offenes Gespraech mitfuehren. Auf WhatsApp ist der Rueckweg zwar
     // vorhanden, aber der Inhaber soll trotzdem sehen, wer angefragt
     // und dann nicht mehr geantwortet hat.
+    await anfrageFortschreiben({
+      sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from,
+      antwort: rohAntwort, kundentext: text, fotos: mediaIds.length
+    }).catch(() => {});
     const mKon2 = String(rohAntwort).match(RE_KONTAKT);
     await gespraechMerken({
       sitzung: "wa:" + from, kanal: "whatsapp",
@@ -496,6 +503,11 @@ async function handleOwnerCommand(from, text) {
   const lern = await lernBefehl(t);
   if (lern) { await sendWhatsApp(from, lern); return true; }
 
+  // Anfragen-Akten: "Anfragen", "Anfrage 3", "Angebot 3: ...", "Erledigt 3",
+  // "Nachfassen 3", "Protokoll", "Protokoll gestern"
+  const akte = await anfrageBefehl(t);
+  if (akte) { await sendWhatsApp(from, akte); return true; }
+
   // "Lösche Termin 3", "Termin 3 löschen", "Lösche alle Termine",
   // "Termin löschen" (ohne Nummer -> wenn nur einer offen ist)
   m = t.match(/^(?:l(?:ö|oe)sche?|entferne)\s+(?:termin\s*)?(\d{1,3}|alle)(?:\s+termine?)?$/i)
@@ -640,7 +652,11 @@ async function handleOwnerCommand(from, text) {
       "• Lernen – offene Lernvorschläge aus der Auswertung\n" +
       "• Lernen 3 ok / Lernen 3 nein – freigeben oder verwerfen\n" +
       "• Gelernt – aktive gelernte Regeln (Vergiss gelernt 2 entfernt)\n" +
-      "• Lernrunde – Auswertung jetzt anstoßen");
+      "• Lernrunde – Auswertung jetzt anstoßen\n" +
+      "• Anfragen – alle offenen Kundenanfragen mit Status\n" +
+      "• Angebot 3: 480 Euro, Kotflügel richten – ich schicke es dem Kunden\n" +
+      "• Erledigt 3 / Nachfassen 3 – abschließen oder nachhaken\n" +
+      "• Protokoll / Protokoll gestern – Gesprächsprotokoll des Tages");
     return true;
   }
   if ((m = t.match(/^vergiss (nummer |notiz )?(\d+)/i))) {
