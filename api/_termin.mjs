@@ -414,6 +414,98 @@ export async function warteschlangeZustellen() {
   return false;
 }
 
+// ---- Angefangene, nicht beendete Gespraeche -------------------------
+// Gerade im Web-Chat sind die Daten weg, sobald der Kunde das Fenster
+// schliesst. Wir merken deshalb pro Sitzung, was bisher bekannt ist,
+// und melden sie dem Inhaber, wenn eine Weile nichts mehr kam.
+// Gespeichert wird nur, was der Kunde selbst genannt hat.
+const OFFEN_REIF_MIN = 25;    // so lange Stille, dann gilt es als liegengeblieben
+const OFFEN_TTL_TAGE = 3;
+
+export async function gespraechMerken({ sitzung, kanal, name, tel, thema, fotos, abgeschlossen }) {
+  if (!sitzung) return;
+  const schluessel = "offen:" + sitzung;
+  if (abgeschlossen) {
+    // Termin gemeldet oder Kontakt weitergegeben: nichts mehr offen.
+    await redis("DEL", schluessel);
+    const idx = (await jsonLesen("offen:index", [])).filter(s => s !== sitzung);
+    await jsonSchreiben("offen:index", idx);
+    return;
+  }
+  let alt = {};
+  try { alt = JSON.parse(await redis("GET", schluessel)) || {}; } catch (_) {}
+  const eintrag = {
+    kanal,
+    // Einmal Genanntes nicht wieder verlieren
+    name: (name || alt.name || "").slice(0, 60),
+    tel: (tel || alt.tel || "").slice(0, 40),
+    thema: (thema || alt.thema || "").slice(0, 160),
+    fotos: (alt.fotos || 0) + (fotos || 0),
+    zuege: (alt.zuege || 0) + 1,
+    beginn: alt.beginn || Date.now(),
+    ts: Date.now()
+  };
+  await redis("SET", schluessel, JSON.stringify(eintrag), "EX", OFFEN_TTL_TAGE * 86400);
+  const idx = await jsonLesen("offen:index", []);
+  if (!idx.includes(sitzung)) {
+    idx.push(sitzung);
+    await jsonSchreiben("offen:index", idx.slice(-80));
+  }
+}
+
+// Wird vom Wecker (api/cron.js) aufgerufen.
+export async function offeneGespraecheMelden() {
+  const idx = await jsonLesen("offen:index", []);
+  if (!idx.length) return 0;
+  const jetzt = Date.now();
+  const reif = [], bleibt = [];
+
+  for (const s of idx) {
+    let e = null;
+    try { e = JSON.parse(await redis("GET", "offen:" + s)); } catch (_) {}
+    if (!e) continue;                                  // abgelaufen oder abgeschlossen
+    if (jetzt - e.ts < OFFEN_REIF_MIN * 60000) { bleibt.push(s); continue; }
+    if (e.zuege < 2 && !e.fotos) {                     // blosses Antippen, kein Anliegen
+      await redis("DEL", "offen:" + s);
+      continue;
+    }
+    reif.push({ s, e });
+  }
+  if (!reif.length) { await jsonSchreiben("offen:index", bleibt); return 0; }
+
+  const zeilen = reif.map(({ e }) => {
+    const min = Math.round((jetzt - e.ts) / 60000);
+    return "• " + (e.kanal === "web" ? "Website-Chat" : "WhatsApp") +
+      (e.name ? ", " + e.name : ", Name nicht genannt") +
+      (e.tel ? ", " + e.tel + (rufnummerPruefen(e.tel).hinweis ? " (" + rufnummerPruefen(e.tel).hinweis + ")" : "") : ", keine Nummer") +
+      "\n  " + (e.thema || "kein Text") +
+      (e.fotos ? "\n  " + e.fotos + " Foto(s) geschickt" : "") +
+      "\n  seit " + min + " Min. keine Antwort mehr";
+  });
+
+  const text =
+    "Angefangen, nicht zu Ende geführt (" + reif.length + ")\n" +
+    "――――――――――――\n" + zeilen.join("\n\n") +
+    "\n\nDiese Leute haben angefragt und sich dann nicht mehr gemeldet." +
+    "\nMit Nummer: kurz zurückrufen lohnt sich meist." +
+    "\nOhne Nummer über den Website-Chat: leider kein Rückweg – dort ist die Anfrage verloren.";
+
+  let zugestellt = false;
+  if (istRuhezeit()) {
+    await warteschlangeAnhaengen(text);
+    zugestellt = true;                       // kommt am Morgen mit
+  } else {
+    for (const n of inhaberNummern()) {
+      if (await sendWA(n, text.slice(0, 3900))) zugestellt = true;
+    }
+    if (!zugestellt) await sendMail("Offene Anfragen im Chat", text);
+  }
+  // Gemeldete Sitzungen schliessen, damit sie nicht doppelt kommen
+  for (const { s } of reif) await redis("DEL", "offen:" + s);
+  await jsonSchreiben("offen:index", bleibt);
+  return reif.length;
+}
+
 export function datumLesbar(iso) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
   if (!m) return String(iso || "");

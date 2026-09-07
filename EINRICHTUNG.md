@@ -59,6 +59,18 @@ Git-Repository, auch nicht in ein privates.
 Ohne Upstash läuft der Web-Chat weiter, aber es gibt kein Gedächtnis,
 keine Terminliste und keinen Lern-Modus.
 
+### Neu für die Telefon-Übergabe
+
+| Variable | Beispiel | Zweck |
+|---|---|---|
+| `WA_TEMPLATE_HANDOFF` | `alex_handoff` | Name der Meta-Vorlage für die erste Nachricht nach einem Anruf. Standard, wenn leer: `alex_handoff` |
+| `WA_TEMPLATE_LANG` | `de` | Sprachcode der Vorlage. Standard, wenn leer: `de` |
+
+Die Vorlage muss in **Meta Business → WhatsApp Manager → Vorlagen**
+angelegt und freigegeben sein. Solange das nicht passiert ist, schlägt
+der Vorlagen-Versand fehl und der Handoff fällt auf den gesprochenen
+Hinweis zurück (`weg: "fallback"`).
+
 ### Neu für WhatsApp
 | Name | Wert |
 |---|---|
@@ -106,6 +118,75 @@ sieht sie, sobald WhatsApp dazukommt.
 - Antwortet als Assistent statt als Kundenberater
 - „Termine" · „Termin 3 passt" · „Lösche Termin 3"
 - „Merk dir: …" · „Zeig Notizen" · „Zeig Lücken" · „Status" · „Hilfe"
+
+---
+
+## Telefon / Alex Anruf
+
+Telefon ist der dritte Kanal. Derselbe Alex, dasselbe Wissen, dieselben
+Marker. Neu ist nur ein Sprech-Overlay über dem normalen Prompt.
+
+    Web      → api/chat.js        + prompts/system-alex.md
+    WhatsApp → api/whatsapp.js    + prompts/system-alex.md
+    Telefon  → api/voice.js       + system-alex.md + system-alex-voice.md
+    Aktionen → api/_termin.mjs
+    Wissen   → knowledge/ + npm run knowledge
+
+`prompts/system-alex-voice.md` wird zur Laufzeit gelesen und steht
+**nicht** im Bundle. Änderungen daran wirken nach dem nächsten Deploy,
+ohne `npm run knowledge`. Für `prompts/system-alex.md` und `knowledge/`
+gilt weiterhin: nach jeder Änderung `npm run knowledge` laufen lassen.
+
+### Was am Telefon absichtlich nicht passiert
+
+Kein Kostenvoranschlag, keine Fotobewertung, kein Fahrzeugschein. Alex
+klärt am Telefon nur kurz das Anliegen und übergibt dann auf WhatsApp.
+Ab dort übernimmt `api/whatsapp.js` wie gewohnt: Fotos, Fahrzeugschein,
+Weiterleitung an Dirk.
+
+### Endpunkt testen
+
+    curl -X POST https://IHRE-DOMAIN.de/api/voice \
+      -H "content-type: application/json" \
+      -d '{"text":"Guten Tag, ich hab einen Kratzer an der Tür",
+           "call":{"from_number":"+4917612345678"}}'
+
+Antwort:
+
+    { "text": "…reiner Sprechtext, ohne Marker…", "actions": [] }
+
+Die Anrufernummer wird robust gelesen (`from`, `caller`,
+`customer_number`, `from_number`, `call.customer.number`). Der Verlauf
+kommt entweder als einzelner `text` oder als Liste unter `messages`,
+`transcript` oder `conversation`. In den Logs steht jeder Aufruf mit
+`channel: "phone"` und der Rufnummer **nur mit den letzten vier
+Ziffern**.
+
+### Wie die Übergabe auf WhatsApp läuft
+
+Drei Wege, in dieser Reihenfolge:
+
+1. **Vorlage** (`sendWATemplate`) — geht auch außerhalb der 24 Stunden,
+   setzt aber eine in Meta freigegebene Vorlage voraus.
+2. **Freier Text** (`sendWA`, unverändert) — greift nur, wenn der Kunde
+   uns in den letzten 24 Stunden geschrieben hat.
+3. **Gesprochener Hinweis** — Alex sagt dem Anrufer, dass er kurz selbst
+   auf WhatsApp schreiben soll.
+
+Welcher Weg genommen wurde, steht in der Antwort im Feld `weg`
+(`template` · `freitext` · `fallback`) und im Log. Solange keine Vorlage
+freigegeben ist, landet ein Anrufer praktisch immer bei Weg 3.
+
+### Weitere Einschränkung
+
+Eine Terminanfrage vom Telefon meldet Alex über dieselbe Liste wie den
+Web-Chat. Im Zettel für Dirk steht deshalb „Kam über: Website-Chat".
+Die Rufnummer und der Hinweis „Telefon-Anruf von …" stehen im selben
+Zettel unter Telefon und Anliegen. Sauber getrennt wäre es erst mit
+einer Anpassung in `api/_termin.mjs`, die hier bewusst unterblieben ist.
+
+Eine Anbindung an Retell, Vapi oder Twilio ist noch nicht eingerichtet.
+Der Endpunkt steht, die Telefonie davor fehlt.
 
 ---
 

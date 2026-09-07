@@ -18,6 +18,7 @@ import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
          warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
+         gespraechMerken,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -343,6 +344,19 @@ async function verarbeite(req) {
   // Lernen: Gespraech anonymisiert ablegen (Kennung = gehashte Nummer,
   // nie die Nummer selbst). Nach LERN_INTERVALL Gespraechen Lernrunde.
   if (!chef) {
+    // Offenes Gespraech mitfuehren. Auf WhatsApp ist der Rueckweg zwar
+    // vorhanden, aber der Inhaber soll trotzdem sehen, wer angefragt
+    // und dann nicht mehr geantwortet hat.
+    const mKon2 = String(rohAntwort).match(RE_KONTAKT);
+    await gespraechMerken({
+      sitzung: "wa:" + from, kanal: "whatsapp",
+      name: ((mKon2 && mKon2[1]) || "").trim(),
+      tel: from,
+      thema: String(text || "").slice(0, 160),
+      fotos: mediaIds.length,
+      abgeschlossen: hatteDaten
+    }).catch(() => {});
+
     try {
       let hsh = 0;
       for (const c of String(from)) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;

@@ -11,7 +11,8 @@ import { gespraechAblegen, lernrunde, gelerntBlock } from "./_lernen.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
-         kvaNotiz, fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN } from "./_termin.mjs";
+         kvaNotiz, fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN,
+         gespraechMerken } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -217,13 +218,14 @@ export default async function handler(req, res) {
     ? lastUser.content : "";
   await logGapIfNeeded(frage, answer);
 
+  const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
+
   // Zurueckgehaltene Nachtmeldungen zustellen (nur in der Buerozeit)
   await warteschlangeZustellen().catch(() => {});
 
   // Gespraech anonymisiert ablegen; nach LERN_INTERVALL neuen
   // Gespraechen laeuft die Lernrunde (Vorschlaege an Dirk, nichts
   // wird ohne Freigabe uebernommen).
-  const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
   try {
     const faellig = await gespraechAblegen({
       kennung: sitzung, kanal: "web",
@@ -234,7 +236,21 @@ export default async function handler(req, res) {
   } catch (e) { console.error("lernen", e && e.message); }
 
   // Terminanfrage an den Inhaber melden
-  await meldeTermin({ antwort: answer, kanal: "web", thema: frage });
+  const gemeldet = await meldeTermin({ antwort: answer, kanal: "web", thema: frage });
+
+  // Offenes Gespraech mitfuehren: Bricht der Kunde ab, meldet der
+  // Wecker (api/cron.js) das dem Inhaber samt allem, was bekannt ist.
+  const mKon = String(answer || "").match(RE_KONTAKT);
+  await gespraechMerken({
+    sitzung, kanal: "web",
+    name: ((mKon && mKon[1]) || "").trim(),
+    tel: ((mKon && mKon[2]) || "").trim(),
+    thema: String(frage || "").slice(0, 160),
+    fotos: images.length,
+    // Sobald eine Terminanfrage raus ist oder Kontaktdaten weitergegeben
+    // wurden, ist nichts mehr offen.
+    abgeschlossen: !!gemeldet || !!mKon
+  }).catch(() => {});
 
   // Schadensfotos aus dem Web-Chat an den Inhaber weiterleiten. Sie
   // kommen hier ohne WhatsApp-Kennung an und werden deshalb einmal an
