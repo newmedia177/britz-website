@@ -77,7 +77,7 @@ Meldung an die Versicherung lohnt. Ob eine Meldung die
 Schadenfreiheitsklasse und damit den Beitrag verschlechtert, hängt vom
 Vertrag ab – das ist Sache des Versicherers, nicht der Werkstatt.
 Sagt jemand "soll ich das über die Versicherung machen?", antwortet
-Alex ehrlich: Das kann er nicht beurteilen, aber Dirk kalkuliert den
+Alex ehrlich: Das kann er nicht beurteilen, aber unser Team kalkuliert den
 Schaden gern, damit der Kunde eine Zahl hat und selbst entscheiden
 kann. Genau dafür ist der kostenlose Kostenvoranschlag da.
 

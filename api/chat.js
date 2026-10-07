@@ -8,12 +8,14 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, lernrunde, gelerntBlock } from "./_lernen.mjs";
-import { anfrageFortschreiben, fehlerZaehlen, uebergabeAnWhatsApp } from "./_anfragen.mjs";
+import { anfrageFortschreiben, fehlerZaehlen, uebergabeAnWhatsApp, weckerAufgaben } from "./_anfragen.mjs";
+import { buchungVerarbeiten, buchungKontext } from "./_buchung.mjs";
+import { spiegeln } from "./_mitlesen.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
          kvaNotiz, fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN,
-         gespraechMerken } from "./_termin.mjs";
+         gespraechMerken, offeneGespraecheMelden } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -28,7 +30,8 @@ const STROM_LEERLAUF_MS = Number(process.env.TEST_LEERLAUF_MS) || 20000;  // lae
 // ANNAHME (bitte mit Dirk abstimmen): Rueckmeldezeit fuer den
 // Kostenvoranschlag. Steht hier zentral, damit sie an einer Stelle
 // geaendert werden kann.
-export const RUECKMELDUNG = "in der Regel am nächsten Werktag";
+// Vorgabe Dirk (30.09.2026): Team-Formulierung, kein festes "heute oder morgen".
+export const RUECKMELDUNG = "Unser Team meldet sich in der Regel einen Tag später mit dem Kostenvoranschlag, je nach Aufwand kann es auch etwas länger dauern.";
 
 const NICHT_ERREICHBAR =
   "Entschuldigung, ich bin gerade nicht erreichbar. " +
@@ -37,9 +40,8 @@ const NICHT_ERREICHBAR =
 // Nach der letzten eingesammelten Angabe, falls das Modell nur die
 // Marker geschickt hat und kein Wort dazu.
 const ABSCHLUSS_NOTSATZ =
-  "Danke, das habe ich alles notiert und gebe es an Dirk weiter. " +
-  "Er kalkuliert unverbindlich und meldet sich " + RUECKMELDUNG + ". " +
-  "Sie müssen nichts weiter tun.";
+  "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
+  RUECKMELDUNG + " Sie müssen nichts weiter tun.";
 
 // Leere Antwort ohne erkennbare Daten
 const NACHFASS_NOTSATZ =
@@ -125,7 +127,7 @@ export default async function handler(req, res) {
           cache_control: { type: "ephemeral" }
         }, {
           type: "text",
-          text: zeitKontext(await belegteZeiten().catch(() => [])) + notesBlock
+          text: zeitKontext(await belegteZeiten().catch(() => [])) + (await buchungKontext()) + notesBlock
         }],
         messages,
         stream: true
@@ -209,24 +211,48 @@ export default async function handler(req, res) {
     sseWrite(res, notsatz);
   } else if (abgebrochen) {
     // Mitten im Satz abgerissen: sauber zu Ende bringen
-    const schluss = " Kurz zusammengefasst: Ich habe alles notiert und gebe es an Dirk weiter. Sie müssen nichts weiter tun.";
+    const schluss = " Kurz zusammengefasst: Ich habe alles notiert und an unser Team weitergegeben. Sie müssen nichts weiter tun.";
     answer += schluss;
     sseWrite(res, schluss);
   }
 
-  res.write("data: [DONE]\n\n");
-  res.end();
-
-  // Wissenslücke still protokollieren (blockiert die Antwort nicht)
+  // WICHTIG: Alles Folgende laeuft VOR dem Antwortende. Nach res.end()
+  // friert Vercel die Funktion oft ein, dann gingen Meldungen an Dirk
+  // verloren (Ursache im Fall Schaefer, September 2026). Der Kunde hat
+  // seinen Text schon vollstaendig; er sieht nur die Tipp-Punkte etwas
+  // laenger.
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   const frage = typeof (lastUser && lastUser.content) === "string"
     ? lastUser.content : "";
-  await logGapIfNeeded(frage, answer);
-
   const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
+
+  // Verbindliche Buchung pruefen. Passt sie nicht (voll, zu knapp,
+  // Abholung ohne "Fertig"), geht die Korrektur noch im selben Strom an
+  // den Kunden. Passt sie, bekommt er die Kalenderkarte.
+  const mKB = String(answer || "").match(RE_KONTAKT);
+  const buchung = await buchungVerarbeiten({
+    antwort: answer, kanal: "web", sitzung,
+    name: ((mKB && mKB[1]) || "").trim(), tel: ((mKB && mKB[2]) || "").trim(),
+    thema: frage, fotos: images.length
+  }).catch(e => { console.error("buchung", e && e.message); return null; });
+  if (buchung && buchung.ok) {
+    const karte = "\n[[TERMIN_OK|" + buchung.iso + "|" + buchung.titel + "|" + buchung.ort + "]]";
+    answer += karte; sseWrite(res, karte);
+  } else if (buchung && buchung.korrektur) {
+    const k = "\n\n" + buchung.korrektur;
+    answer += k; sseWrite(res, k);
+  }
+
+  await logGapIfNeeded(frage, answer);
 
   // Zurueckgehaltene Nachtmeldungen zustellen (nur in der Buerozeit)
   await warteschlangeZustellen().catch(() => {});
+  // Der Wecker laeuft im Hobby-Tarif nur einmal am Tag. Deshalb erledigt
+  // jede eingehende Nachricht die faelligen Aufgaben mit: Abbruch-
+  // Meldungen, Morgenbriefing, Wochenbericht. Alles ist gegen doppelte
+  // Ausfuehrung gesichert.
+  await offeneGespraecheMelden().catch(() => {});
+  await weckerAufgaben().catch(() => {});
 
   // Gespraech anonymisiert ablegen; nach LERN_INTERVALL neuen
   // Gespraechen laeuft die Lernrunde (Vorschlaege an Dirk, nichts
@@ -237,7 +263,8 @@ export default async function handler(req, res) {
       verlauf: [...raw.slice(-MAX_TURNS).map(m => ({ role: m.role, content: m.content })),
                 { role: "assistant", content: answer }]
     });
-    if (faellig) await lernrunde();
+    // faellige Lernrunde erledigt der Wecker (api/cron.js)
+    void faellig;
   } catch (e) { console.error("lernen", e && e.message); }
 
   // Terminanfrage an den Inhaber melden
@@ -255,6 +282,7 @@ export default async function handler(req, res) {
   if (akte && akte.tel && !akte.uebergeben) {
     uebergabeAnWhatsApp(akte).catch(() => {});
   }
+  await spiegeln({ kanal: "web", akte, kundeText: frage, alexText: markerRaus(answer), fotos: images.length });
   const mKon = String(answer || "").match(RE_KONTAKT);
   await gespraechMerken({
     sitzung, kanal: "web",
@@ -264,7 +292,7 @@ export default async function handler(req, res) {
     fotos: images.length,
     // Sobald eine Terminanfrage raus ist oder Kontaktdaten weitergegeben
     // wurden, ist nichts mehr offen.
-    abgeschlossen: !!gemeldet || !!mKon
+    abgeschlossen: !!gemeldet || !!mKon || !!(buchung && buchung.ok)
   }).catch(() => {});
 
   // Schadensfotos aus dem Web-Chat an den Inhaber weiterleiten. Sie
@@ -279,8 +307,11 @@ export default async function handler(req, res) {
       tel: ((mK && mK[2]) || "").trim(),
       hinweis: [kvaNotiz(answer), String(frage).slice(0, 200)]
                  .filter(Boolean).join("\n")
-    });
+    }).catch(e => console.error("fotos", e && e.message));
   }
+
+  res.write("data: [DONE]\n\n");
+  res.end();
 }
 
 // ---- Selbstlernende Schleife: erkennt, was der Assistent NICHT wusste --
@@ -385,7 +416,7 @@ function berlinTeile(d) {
   const f = new Intl.DateTimeFormat("de-DE", {
     timeZone: "Europe/Berlin", year: "numeric", month: "2-digit",
     day: "2-digit", hour: "2-digit", minute: "2-digit",
-    weekday: "long", hour12: false
+    weekday: "long", hourCycle: "h23"
   }).formatToParts(d);
   const g = t => (f.find(x => x.type === t) || {}).value;
   const wdMap = { Sonntag: 0, Montag: 1, Dienstag: 2, Mittwoch: 3,
@@ -606,29 +637,12 @@ export function zeitKontext(belegt) {
     "\"" + abschied + "\". Nicht erzwingen, nur wenn es natürlich wirkt.\n" +
     "- Am Wochenende oder nach Feierabend: sag ruhig, dass das Team gerade " +
     "nicht da ist, aber bleib hilfsbereit — du kannst den Schaden trotzdem " +
-    "einschätzen, Fragen beantworten und einen Termin vormerken. Formuliere " +
+    "einschätzen, Fragen beantworten und einen Termin verbindlich buchen. Formuliere " +
     "das als Angebot, nicht als Absage.\n" +
     "- Schreib wie ein Mensch am Tresen: kurze Sätze, natürliche Sprache, " +
     "kein Behördendeutsch, keine Textbausteine, keine Aufzählungen ohne Not. " +
     "Wiederhole nicht bei jeder Antwort Öffnungszeiten oder Standardsätze.\n\n" +
-    "TERMINE – verbindliche Regeln:\n" +
-    "- Samstag und Sonntag ist IMMER geschlossen, ebenso an Berliner " +
-    "Feiertagen. Schlage solche Tage niemals vor.\n" +
-    "- Montagvormittag werden keine Termine vergeben (Werkstattplanung).\n" +
-    "- Nicht direkt zur Öffnung und nicht kurz vor Feierabend – es muss " +
-    "genug Zeit für die Begutachtung bleiben.\n" +
-    "- Diese Zeitfenster sind aktuell möglich (nur diese vorschlagen):\n" +
-    (tage.length ? tage.map(x => "  · " + x).join("\n")
-                 : "  · zurzeit keine – Team meldet sich zur Abstimmung") +
-    "\n- Rechne Wochentage nie selbst aus, nutze ausschließlich diese Liste. " +
-    "Sage nie einen Slot verbindlich zu; das Team bestätigt den Termin.\n" +
-    "- Pro Besichtigung sind 30 Minuten eingeplant. Schlage Uhrzeiten " +
-    "immer zur vollen oder halben Stunde vor.\n" +
-    (belegtListe.length
-      ? "- SCHON VERGEBEN, diese Zeiten NICHT mehr anbieten (auch nicht " +
-        "innerhalb von 30 Minuten davor oder danach):\n" +
-        belegtListe.map(x => "  · " + x).join("\n") +
-        "\n  Ist ein Wunsch davon belegt, biete von dir aus die nächste " +
-        "freie Zeit an – am selben Tag, sonst am nächsten möglichen Tag.\n"
-      : "- Aktuell ist noch keine Zeit vergeben.\n");
+    "TERMINE: Samstag, Sonntag und Berliner Feiertage sind geschlossen. " +
+    "Welche Zeitfenster verbindlich buchbar sind, steht in der Liste " +
+    "FREIE TERMINFENSTER weiter unten. Rechne Wochentage nie selbst aus.\n";
 }

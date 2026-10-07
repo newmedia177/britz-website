@@ -30,6 +30,7 @@ export function icsAdresse(wann, titel, ort) {
 
 export function markerRaus(text) {
   return String(text || "")
+    .replace(/\[\[[A-Z_]+\|[^\]]*\]\]/g, "")
     .replace(RE_TERMIN, "")
     .replace(RE_TERMIN_OK, "")
     .replace(RE_KONTAKT, "")
@@ -358,7 +359,7 @@ export const RUHE_BIS = 8;    // erst ab 8 Uhr wieder
 
 export function istRuhezeit(d = new Date()) {
   const std = Number(new Intl.DateTimeFormat("de-DE", {
-    hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
+    hour: "numeric", hourCycle: "h23", timeZone: "Europe/Berlin"
   }).formatToParts(d).find(p => p.type === "hour").value);
   return std < RUHE_BIS || std >= RUHE_VON;
 }
@@ -755,7 +756,7 @@ export async function tagesBriefing(inhaberNr) {
   // "Guten Abend" herauskam - auch mittags. Deshalb direkt die Stunde
   // ueber formatToParts holen.
   const teile = new Intl.DateTimeFormat("de-DE", {
-    hour: "numeric", hour12: false, timeZone: "Europe/Berlin"
+    hour: "numeric", hourCycle: "h23", timeZone: "Europe/Berlin"
   }).formatToParts(new Date());
   const stunde = Number((teile.find(p => p.type === "hour") || {}).value || 0);
   const monat = Number(new Intl.DateTimeFormat("de-DE", {

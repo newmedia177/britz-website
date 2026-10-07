@@ -14,6 +14,8 @@
 
 import { warteschlangeZustellen, offeneGespraecheMelden } from "./_termin.mjs";
 import { weckerAufgaben } from "./_anfragen.mjs";
+import { lernrunde, LERN_INTERVALL } from "./_lernen.mjs";
+import { redis } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -44,6 +46,13 @@ export default async function handler(req, res) {
     ergebnis.offene = await offeneGespraecheMelden();
   } catch (e) {
     console.error("cron offene", e && e.message);
+  }
+  // Faellige Lernrunde (frueher im Kundengespraech, dort bis zu 45 s Wartezeit)
+  try {
+    const z = Number(await redis("GET", "lern:zaehler")) || 0;
+    if (z >= LERN_INTERVALL) ergebnis.lernrunde = await lernrunde();
+  } catch (e) {
+    console.error("cron lernrunde", e && e.message);
   }
   res.status(200).json({ ok: true, ...ergebnis, zeit: new Date().toISOString() });
 }

@@ -7,19 +7,22 @@
 // Optional (Gesprächsgedächtnis + Lern-Modus, sehr empfohlen):
 //   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
 //   oder KV_REST_API_URL / KV_REST_API_TOKEN (neuere Vercel-Integration)
-//   OWNER_NUMBERS          Kommagetrennt, international ohne + (z. B. 491722769741)
+//   OWNER_NUMBERS          Kommagetrennt, international ohne + (z. B. 4917xxxxxxxx)
 //   GRAPH_VERSION          Optional, Standard v25.0
 //
 // Webhook-URL in der Meta-App: https://<eure-domain>/api/whatsapp
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, lernrunde, gelerntBlock, lernBefehl } from "./_lernen.mjs";
-import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen } from "./_anfragen.mjs";
+import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben } from "./_anfragen.mjs";
+import { buchungBefehl, buchungVerarbeiten, buchungKontext, RE_BUCHUNG } from "./_buchung.mjs";
+import { spiegeln, kundeInUebernahme, uebernahmeKunde, uebernahmeBefehl, anUebernehmer } from "./_mitlesen.mjs";
+import { akteHolenOderAnlegen } from "./_anfragen.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
          warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
-         gespraechMerken,
+         gespraechMerken, sendWA, offeneGespraecheMelden,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -111,15 +114,42 @@ async function verarbeite(req) {
     const briefing = await tagesBriefing(from);
     if (briefing) await sendWhatsApp(from, briefing);
 
+    // ---- Uebernahme / Mitlesen ------------------------------------
+    const ueb = await uebernahmeBefehl(from, text);
+    if (ueb) { await sendWhatsApp(from, ueb); return; }
+
     // ---- Lern-Modus: nur Inhaber dürfen Anweisungen geben --------
     const handled = await handleOwnerCommand(from, text);
     if (handled) return;
+
+    // Laeuft eine Uebernahme, geht alles, was kein Befehl war, 1:1 an
+    // den Kunden. Im Verlauf des Kunden landet es als Werkstatt-Nachricht,
+    // damit Alex nach "Fertig" weiss, was besprochen wurde.
+    const kundeUeb = await uebernahmeKunde(from);
+    if (kundeUeb && text) {
+      const ok = await sendWA(kundeUeb, text);
+      const hist = await memGet(kundeUeb);
+      await memSet(kundeUeb, anhaengen(hist, { role: "assistant", content: "[Werkstatt persönlich] " + text }));
+      if (!ok) await sendWhatsApp(from, "⚠ Nicht zugestellt – der Kunde hat seit über 24 Std. nicht geschrieben.");
+      return;
+    }
+  }
+
+  // ---- Kunde in einer Uebernahme: Alex schweigt, Dirk liest direkt ----
+  if (!isOwner(from)) {
+    const ueb = await kundeInUebernahme(from);
+    if (ueb) {
+      await anUebernehmer(ueb, { text, mediaIds });
+      const hist = await memGet(from);
+      // WhatsApp-Verlauf muss mit "user" beginnen und abwechseln: wir haengen an
+      await memSet(from, anhaengen(hist, { role: "user", content: text || "(Foto)" }));
+      return;
+    }
   }
 
   // ---- Gesprächsverlauf laden (optional, via Upstash) ----------
   const history = await memGet(from);
-  const messages = [...history, { role: "user", content: text }]
-    .slice(-MAX_TURNS);
+  const messages = anhaengen(history, { role: "user", content: text });
 
   // Bilder an die letzte Nachricht hängen
   if (images.length) {
@@ -141,7 +171,7 @@ async function verarbeite(req) {
   })));
 
   const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock()) +
-                     (chef ? "" : await akteKontext(from).catch(() => ""));
+                     (isOwner(from) ? "" : await akteKontext(from).catch(() => ""));
 
   // Schreibt der Inhaber, arbeitet Alex als sein Assistent statt als
   // Kundenberater. Dafuer bekommt er den Stand der offenen Anfragen mit.
@@ -219,7 +249,7 @@ async function verarbeite(req) {
         // Derselbe Zeit- und Terminkontext wie im Web-Chat. Ohne ihn
         // kennt Alex weder das heutige Datum noch die buchbaren Fenster
         // und versteht Angaben wie "morgen 11 Uhr" nicht.
-        text: zeitKontext(await belegteZeiten().catch(() => [])) + chefBlock +
+        text: zeitKontext(await belegteZeiten().catch(() => [])) + (chef ? "" : await buchungKontext()) + chefBlock +
           (chef ? "" :
           "\n\nDieser Kunde schreibt über WhatsApp von der Nummer +" + from +
           ". Frag deshalb NICHT nach der Telefonnummer, du hast sie bereits. " +
@@ -281,6 +311,12 @@ async function verarbeite(req) {
   // Zurueckgehaltene Nachtmeldungen zustellen, sobald wieder Buerozeit
   // ist und irgendjemand schreibt.
   await warteschlangeZustellen().catch(() => {});
+  // Der Wecker laeuft im Hobby-Tarif nur einmal am Tag. Deshalb erledigt
+  // jede eingehende Nachricht die faelligen Aufgaben mit: Abbruch-
+  // Meldungen, Morgenbriefing, Wochenbericht. Alles ist gegen doppelte
+  // Ausfuehrung gesichert.
+  await offeneGespraecheMelden().catch(() => {});
+  await weckerAufgaben().catch(() => {});
 
   if (!chef) {
     await meldeTermin({ antwort: reply, kanal: "whatsapp", kundeNr: from,
@@ -315,7 +351,7 @@ async function verarbeite(req) {
   // beim naechsten Zug, dass er die Daten schon weitergegeben hat.
   const rohAntwort = String(reply);
   const hatteDaten = RE_KONTAKT.test(rohAntwort) || RE_KVA.test(rohAntwort) ||
-                     RE_TERMIN.test(rohAntwort);
+                     RE_TERMIN.test(rohAntwort) || RE_BUCHUNG.test(rohAntwort);
 
   reply = markerRaus(reply);
 
@@ -328,10 +364,22 @@ async function verarbeite(req) {
   if (!reply) {
     await fehlerZaehlen("leer").catch(() => {});
     reply = hatteDaten
-      ? "Danke, das habe ich alles notiert und gebe es an Dirk weiter. " +
-        "Er kalkuliert unverbindlich und meldet sich " + RUECKMELDUNG + " hier. " +
-        "Sie müssen nichts weiter tun."
+      ? "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
+        RUECKMELDUNG + " Die Antwort kommt hier. Sie müssen nichts weiter tun."
       : "Können Sie das noch einmal anders formulieren?";
+  }
+  // Verbindliche Buchung pruefen (harte Regeln im Code). Passt sie,
+  // bekommt der Kunde den Kalenderlink; passt sie nicht, die Korrektur
+  // mit freien Alternativen in derselben Nachricht.
+  if (!chef) {
+    const mKB = rohAntwort.match(RE_KONTAKT);
+    const bu = await buchungVerarbeiten({
+      antwort: rohAntwort, kanal: "whatsapp", sitzung: "wa:" + from, kundeNr: from,
+      name: ((mKB && mKB[1]) || "").trim(), tel: ((mKB && mKB[2]) || "").trim() || from,
+      thema: text, fotos: mediaIds.length
+    }).catch(e => { console.error("buchung", e && e.message); return null; });
+    if (bu && bu.ok) kalenderZeile = "\n\nIn den Kalender eintragen:\n" + bu.ics;
+    else if (bu && bu.korrektur) reply += "\n\n" + bu.korrektur;
   }
   if (kalenderZeile) reply += kalenderZeile;
 
@@ -354,6 +402,11 @@ async function verarbeite(req) {
       sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from,
       antwort: rohAntwort, kundentext: text, fotos: mediaIds.length
     }).catch(() => {});
+    // Jede WhatsApp-Unterhaltung bekommt eine Nummer, damit Dirk sie mit
+    // "Uebernehme N" uebernehmen kann (reine Unterhaltung = Status
+    // "gespraech", zaehlt nicht als offene Anfrage).
+    const akteM = await akteHolenOderAnlegen({ kanal: "whatsapp", kundeNr: from, sitzung: "wa:" + from, status: "gespraech" }).catch(() => null);
+    await spiegeln({ kanal: "whatsapp", akte: akteM, kundeText: text, alexText: reply, fotos: mediaIds.length });
     const mKon2 = String(rohAntwort).match(RE_KONTAKT);
     await gespraechMerken({
       sitzung: "wa:" + from, kanal: "whatsapp",
@@ -477,6 +530,17 @@ async function schonVerarbeitet(id) {
 }
 
 // ---- Mini-Gedächtnis über Upstash Redis (optional) ----------------
+// Zwei Nachrichten derselben Rolle hintereinander (z. B. waehrend einer
+// Uebernahme) zusammenfuehren: Die KI erwartet abwechselnde Rollen.
+function anhaengen(hist, msg) {
+  const l = Array.isArray(hist) ? hist.slice() : [];
+  const letzte = l[l.length - 1];
+  if (letzte && letzte.role === msg.role && typeof letzte.content === "string" && typeof msg.content === "string") {
+    l[l.length - 1] = { role: msg.role, content: letzte.content + "\n" + msg.content };
+  } else l.push(msg);
+  return l.slice(-MAX_TURNS);
+}
+
 async function memGet(key) {
   return jsonLesen("wa:" + key, []);
 }
@@ -500,6 +564,12 @@ async function handleOwnerCommand(from, text) {
 
   // Lernrunde: "Lernen", "Lernen 3 ok/nein", "Gelernt", "Vergiss gelernt 2",
   // "Lernexport", "Lernrunde"
+  // Termine: "Termine", "Voll/Frei Donnerstag", "Urlaub 1.10. bis 5.10.",
+  // "Absagen 7", "Verschieben 7 Freitag 8-10", "Eintragen ...", "Fertig 7",
+  // "Abholnachricht selbst/Alex"
+  const bu = await buchungBefehl(t);
+  if (bu) { await sendWhatsApp(from, bu); return true; }
+
   const lern = await lernBefehl(t);
   if (lern) { await sendWhatsApp(from, lern); return true; }
 
@@ -649,6 +719,14 @@ async function handleOwnerCommand(from, text) {
       "• Termine – offene Terminanfragen\n" +
       "• Termin 3 passt – Rückmeldung zu Anfrage Nr. 3\n" +
       "• Lösche Termin 3 – Anfrage aus der Liste nehmen\n" +
+      "• Übernehme 7 – du schreibst selbst mit dem Kunden, \"Fertig\" beendet\n" +
+      "• Mitlesen an / aus – Kundengespräche mitlesen\n" +
+      "• Termine / Termine morgen – alle gebuchten Termine\n" +
+      "• Voll Donnerstag / Frei Donnerstag – Tag sperren oder öffnen\n" +
+      "• Urlaub 1.10. bis 5.10. – Zeitraum sperren\n" +
+      "• Absagen 7 / Verschieben 7 Freitag 8-10 – Kunde wird informiert\n" +
+      "• Eintragen Donnerstag 11-13 Meier – Telefontermin mitzählen\n" +
+      "• Fertig 7 – Auto fertig, Kunde bekommt Abholzeiten\n" +
       "• Lernen – offene Lernvorschläge aus der Auswertung\n" +
       "• Lernen 3 ok / Lernen 3 nein – freigeben oder verwerfen\n" +
       "• Gelernt – aktive gelernte Regeln (Vergiss gelernt 2 entfernt)\n" +

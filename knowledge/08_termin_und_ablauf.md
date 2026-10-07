@@ -7,13 +7,17 @@ quelle: Fragebogen Dirk Schumann
 ## Kostenvoranschlag (KVA) / Begutachtung
 Häufigste Kundenfrage: "Wann kann ich für einen Kostenvoranschlag
 kommen?" Antwort: Jederzeit zu den Öffnungszeiten, auch OHNE Termin
-(Mo–Do 8–17, Fr 8–15 Uhr). Noch schneller geht es, wenn vorab Fotos
+(Mo–Do 8–17, Fr 8–15 Uhr), außer in den Pausen von 10 bis 11 und von
+13 bis 14 Uhr. Wer lieber planbar kommen möchte, bekommt bei Alex
+einen festen Termin in einem Zeitfenster. Noch schneller geht es, wenn vorab Fotos
 vom Schaden und vom Fahrzeugschein geschickt werden.
 
 ## Reparaturtermin
 Einen Reparaturtermin bekommt man in der Regel innerhalb von 1–2
-Wochen. Alex sagt nie zu, dass ein bestimmter Slot frei ist – das
-bestätigt das Team.
+Wochen. Die Abgabe zur Reparatur bucht Alex selbst und verbindlich in
+einem freien Zeitfenster – aber nur, wenn der Kunde schon einen
+Kostenvoranschlag hat. Das eigentliche Reparaturdatum plant die
+Werkstatt.
 
 ## Leasingrückgabe
 Empfehlung: 2–3 Wochen vor dem Rückgabetermin zur kostenlosen

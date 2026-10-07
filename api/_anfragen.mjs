@@ -22,7 +22,7 @@ const GRAPH = "https://graph.facebook.com/v20.0";
 // ---- Datum/Zeit in Berlin ------------------------------------------
 export function berlinJetzt() {
   const t = new Intl.DateTimeFormat("de-DE", {
-    weekday: "short", hour: "numeric", minute: "numeric", hour12: false,
+    weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23",
     year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/Berlin"
   }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
   return {
@@ -59,6 +59,7 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
              status: "neu", ts: Date.now(), verlauf: [] };
     liste.push(akte);
   }
+  if (akte.status === "gespraech") akte.status = "neu";
   if (mK) { akte.name = (mK[1] || "").trim().slice(0, 60) || akte.name;
             akte.tel  = (mK[2] || "").trim().slice(0, 40) || akte.tel; }
   if (mV) { akte.schaden  = (mV[1] || "").trim().slice(0, 60) || akte.schaden;
@@ -72,9 +73,38 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
   return akte;
 }
 
+// ---- Akten-Helfer (auch fuer die Buchung) ----------------------------
+export async function akteFinden(nr) {
+  return (await alleLaden()).find(a => a.nr === Number(nr)) || null;
+}
+export async function akteSpeichern(akte) {
+  const liste = await alleLaden();
+  const i = liste.findIndex(a => a.nr === akte.nr);
+  if (i >= 0) liste[i] = akte; else liste.push(akte);
+  await jsonSchreiben("anfragen", liste.slice(-120));
+}
+export async function akteHolenOderAnlegen({ kanal, kundeNr, sitzung, name, tel, thema, status }) {
+  const liste = await alleLaden();
+  let a = (sitzung && liste.find(x => x.sitzung === sitzung)) ||
+          (kanal === "whatsapp" && kundeNr && liste.filter(x => x.kundeNr === String(kundeNr) && x.status !== "erledigt").pop());
+  if (!a) {
+    const nr = (liste.length ? Math.max(...liste.map(x => x.nr)) : 0) + 1;
+    a = { nr, sitzung: sitzung || "", kanal, kundeNr: kanal === "whatsapp" ? String(kundeNr || "") : "",
+          name: "", tel: "", thema: "", schaden: "", fahrzeug: "", fotos: 0,
+          status: status || "neu", ts: Date.now(), verlauf: [] };
+    liste.push(a);
+  }
+  if (name && !a.name) a.name = String(name).slice(0, 60);
+  if (tel && !a.tel) a.tel = String(tel).slice(0, 40);
+  if (thema && !a.thema) a.thema = String(thema).slice(0, 140);
+  a.letzterKontakt = kanal === "whatsapp" ? Date.now() : a.letzterKontakt;
+  await jsonSchreiben("anfragen", liste.slice(-120));
+  return a;
+}
+
 // ---- An den Kunden schreiben (mit ehrlicher Grenze) ------------------
 // Rueckgabe: { ok, grund } - bei !ok bekommt Dirk den Text zum Selbstschicken.
-async function anKunde(akte, text, vorlage) {
+export async function anKunde(akte, text, vorlage) {
   if (akte.kanal !== "whatsapp" || !akte.kundeNr) {
     return { ok: false, grund: "Anfrage kam über die Website, dort kann ich nicht mehr schreiben" };
   }
@@ -140,7 +170,7 @@ export async function anfrageBefehl(t) {
   let m;
 
   if (/^anfragen$/i.test(s)) {
-    const offen = (await alleLaden()).filter(a => a.status !== "erledigt");
+    const offen = (await alleLaden()).filter(a => !["erledigt", "gespraech"].includes(a.status));
     return offen.length
       ? "Offene Anfragen (" + offen.length + ")\n――――――――――――\n" + offen.map(zeile).join("\n\n") +
         "\n\nBefehle: \"Angebot 3: 480 Euro, Kotflügel richten und lackieren\" · \"Erledigt 3\" · \"Nachfassen 3\" · \"Anfrage 3\""
@@ -182,15 +212,24 @@ export async function anfrageBefehl(t) {
     a.status = "erledigt"; a.erledigtTs = Date.now();
     a.verlauf.push(new Date().toLocaleDateString("de-DE") + " erledigt");
     await jsonSchreiben("anfragen", liste);
-    let zusatz = "";
-    if (process.env.BEWERTUNGS_LINK) {
-      const text = "Vielen Dank, dass Sie bei uns waren" + (a.name ? ", " + a.name : "") + ". " +
-        "Wenn Sie zufrieden sind, freuen wir uns über eine kurze Bewertung – das hilft einem kleinen Betrieb wie unserem sehr: " +
-        process.env.BEWERTUNGS_LINK;
-      const r = await anKunde(a, text, "WA_VORLAGE_BEWERTUNG");
-      zusatz = r.ok ? " Bewertungsbitte ist raus." : " Bewertungsbitte konnte ich nicht schicken (" + r.grund + ").";
-    }
+    // Bewertungsbitte NICHT automatisch: unaufgefordert kann sie als
+    // Werbung ohne Einwilligung gelten. Dirk schickt sie mit
+    // "Bewertung N", wenn der Kunde zugestimmt hat.
+    const zusatz = process.env.BEWERTUNGS_LINK
+      ? " Hat der Kunde gesagt, dass er eine Bewertung schreiben mag? Dann \"Bewertung " + a.nr + "\"." : "";
     return "Anfrage " + a.nr + " abgeschlossen." + zusatz;
+  }
+
+  m = s.match(/^bewertung\s+(\d+)$/i);
+  if (m) {
+    if (!process.env.BEWERTUNGS_LINK) return "Es ist noch kein Bewertungslink hinterlegt (Vercel: BEWERTUNGS_LINK).";
+    const a = (await alleLaden()).find(x => x.nr === Number(m[1]));
+    if (!a) return "Anfrage " + m[1] + " kenne ich nicht.";
+    const text = "Guten Tag" + (a.name ? " " + a.name : "") + ", hier ist Alex von der Autolackiererei in Britz. " +
+      "Vielen Dank, dass Sie bei uns waren. Wie besprochen hier der Link für Ihre Bewertung: " + process.env.BEWERTUNGS_LINK;
+    const r = await anKunde(a, text, "WA_VORLAGE_BEWERTUNG");
+    return r.ok ? "Bewertungslink an " + (a.name || "den Kunden") + " geschickt."
+                : "Konnte nicht schicken (" + r.grund + ")." + (a.tel ? " Bitte selbst an " + a.tel + ":\n\n" + text : "");
   }
 
   m = s.match(/^nachfassen\s+(\d+)$/i);
@@ -271,6 +310,15 @@ async function fehlerSumme(tage) {
 // Terminerinnerung fuer morgen, Mahnung bei liegenden Angeboten,
 // Nachfass-Vorschlag bei stillen Angeboten. Jede Aufgabe laeuft pro Tag
 // hoechstens einmal (Marke im Speicher).
+// Einmal pro Kalenderwoche (Montag als Wochenstart)
+async function einmalDieseWoche(name) {
+  const j = berlinJetzt();
+  const d = new Date(j.datum + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  const r = await redis("SET", "einmal:" + name + ":" + d.toISOString().slice(0, 10), "1", "NX", "EX", 9 * 86400);
+  return r === "OK";
+}
+
 async function einmalHeute(name) {
   const tag = berlinJetzt().datum;
   const r = await redis("SET", "einmal:" + name + ":" + tag, "1", "NX", "EX", 2 * 86400);
@@ -285,29 +333,29 @@ export async function weckerAufgaben() {
   // 1) Morgenbriefing, Werktage ab 8 Uhr
   if (werktag && j.stunde >= 8 && await einmalHeute("briefing")) {
     const liste = await alleLaden();
-    const offen = liste.filter(a => a.status !== "erledigt");
+    const offen = liste.filter(a => !["erledigt", "gespraech"].includes(a.status));
     const wartend = offen.filter(a => a.status === "neu");
     const angebote = offen.filter(a => a.status === "angebot");
-    const termine = await jsonLesen("termine", []);
-    const heute = termine.filter(t => String(t.wann || "").startsWith(j.datum));
+    const buchungen = (await jsonLesen("buchungen", [])).filter(b => b.status === "aktiv");
+    const heute = buchungen.filter(b => b.datum === j.datum).sort((a, b) => a.von - b.von);
     const morgenTag = new Date(Date.now() + 86400000).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
-    const morgen = termine.filter(t => String(t.wann || "").startsWith(morgenTag));
+    const morgen = buchungen.filter(b => b.datum === morgenTag);
     const gesternTag = new Date(Date.now() - 86400000).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
     const gesternNeu = liste.filter(a => new Date(a.ts).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }) === gesternTag).length;
 
     let text = "Guten Morgen Dirk, dein Überblick:\n――――――――――――\n" +
-      "Heute: " + (heute.length ? heute.map(t => (t.wann || "").slice(11, 16) + " " + t.name).join(", ") : "keine Termine") + "\n" +
+      "Heute: " + (heute.length ? heute.length + " von 5 – " + heute.map(b => b.von + "–" + b.bis + " " + (b.name || "ohne Name") + " (" + b.art + ")").join(", ") : "keine Termine") + "\n" +
       "Warten auf dein Angebot: " + wartend.length + (wartend.length ? " (" + wartend.map(a => "Nr. " + a.nr).join(", ") + ")" : "") + "\n" +
       "Angebote raus, noch offen: " + angebote.length + "\n" +
       "Gestern neu: " + gesternNeu + " Anfrage(n)";
     // Terminerinnerung fuer morgen
-    for (const t of morgen) {
-      const a = liste.find(x => x.termin === t.wann) || { kanal: t.kanal, kundeNr: t.kundeNr, name: t.name, letzterKontakt: 0 };
-      const r = await anKunde(a, "Guten Tag " + (t.name || "") + ", hier ist Alex von der Autolackiererei in Britz. " +
-        "Kurze Erinnerung an Ihren Termin morgen um " + (t.wann || "").slice(11, 16) + " Uhr, " +
-        (t.ort || "Haarlemer Straße 48-54, 12359 Berlin") + ". Bis morgen!", "WA_VORLAGE_ERINNERUNG");
-      text += "\nMorgen " + (t.wann || "").slice(11, 16) + " " + t.name + ": " +
-        (r.ok ? "Erinnerung geschickt" : "Erinnerung nicht möglich (" + r.grund + ")" + (t.tel ? " – " + t.tel : ""));
+    for (const b of morgen) {
+      const a = liste.find(x => x.nr === b.akteNr) || { kanal: b.kanal, kundeNr: b.kundeNr, name: b.name, letzterKontakt: 0 };
+      const ort = b.ort === "kleinmachnow" ? "Albert-Einstein-Ring 45, 14532 Kleinmachnow" : "Haarlemer Straße 48-54, 12359 Berlin";
+      const r = await anKunde(a, "Guten Tag" + (b.name ? " " + b.name : "") + ", hier ist Alex von der Autolackiererei in Britz. " +
+        "Kurze Erinnerung an Ihren Termin morgen zwischen " + b.von + " und " + b.bis + " Uhr, " + ort + ". Bis morgen!", "WA_VORLAGE_ERINNERUNG");
+      text += "\nMorgen " + b.von + "–" + b.bis + " " + (b.name || "ohne Name") + ": " +
+        (r.ok ? "Erinnerung geschickt" : "Erinnerung nicht möglich (" + r.grund + ")" + (b.tel ? " – " + b.tel : ""));
     }
     // Mahnung: Anfragen, die zu lange auf ein Angebot warten
     const alt = wartend.filter(a => Date.now() - a.ts > ANGEBOT_MAHNUNG_TAGE * 86400000);
@@ -321,10 +369,13 @@ export async function weckerAufgaben() {
   }
 
   // 2) Wochenbericht, Freitag ab 16 Uhr
-  if (j.wochentag === 5 && j.stunde >= 16 && await einmalHeute("wochenbericht")) {
+  // Freitag ab 16 Uhr. Laeuft der Wecker nur einmal am Tag (Vercel Hobby,
+  // morgens) und gab es freitags nach 16 Uhr keine Nachricht, kommt der
+  // Bericht am Samstagmorgen.
+  if (((j.wochentag === 5 && j.stunde >= 16) || j.wochentag === 6) && await einmalDieseWoche("wochenbericht")) {
     const liste = await alleLaden();
     const woche = Date.now() - 7 * 86400000;
-    const neu = liste.filter(a => a.ts > woche);
+    const neu = liste.filter(a => a.ts > woche && a.status !== "gespraech");
     const erl = liste.filter(a => a.erledigtTs && a.erledigtTs > woche);
     const ang = liste.filter(a => a.angebotTs && a.angebotTs > woche);
     const k = await jsonLesen("lern:kennzahlen", null);
@@ -335,7 +386,7 @@ export async function weckerAufgaben() {
       "Neue Anfragen: " + neu.length + " (Website " + neu.filter(a => a.kanal === "web").length + ", WhatsApp " + neu.filter(a => a.kanal === "whatsapp").length + ")\n" +
       "Angebote verschickt: " + ang.length + "\n" +
       "Abgeschlossen: " + erl.length + "\n" +
-      "Noch offen gesamt: " + liste.filter(a => a.status !== "erledigt").length + "\n" +
+      "Noch offen gesamt: " + liste.filter(a => !["erledigt", "gespraech"].includes(a.status)).length + "\n" +
       (k ? "Letzte Auswertung (" + k.d + "): Abschlüsse " + k.mit_abschluss + ", Abbrüche " + k.abbrueche + ", Schleifen " + k.schleifen + "\n" : "") +
       "Gelernte Regeln aktiv: " + aktiv.length + (offenVorschlaege.length ? " · " + offenVorschlaege.length + " Vorschläge warten auf dein Ok (\"Lernen\")" : "") + "\n" +
       "Technische Aussetzer diese Woche: " + fehler + (fehler ? " (Julian ist informiert)" : "") +
