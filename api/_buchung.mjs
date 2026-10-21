@@ -15,7 +15,7 @@
 // Der Code prueft jede Buchung hart gegen diese Regeln. Der Prompt sorgt
 // nur dafuer, dass Alex von vornherein Passendes anbietet.
 
-import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail,
+import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail, zustellenAnInhaber,
          istRuhezeit, icsAdresse } from "./_termin.mjs";
 import { akteHolenOderAnlegen, akteFinden, akteSpeichern, anKunde } from "./_anfragen.mjs";
 
@@ -171,10 +171,7 @@ async function anInhaber(text) {
     await jsonSchreiben("wartend", l.slice(-30));
     return true;
   }
-  let ok = false;
-  for (const n of inhaberNummern()) if (await sendWA(n, text.slice(0, 3900))) ok = true;
-  if (!ok) await sendMail("Alex: Termininfo nicht zustellbar", text);
-  return ok;
+  return zustellenAnInhaber(text, { kurz: String(text).split("\n")[0] + " · " + String(text).split("\n")[2] });
 }
 
 // ---- Buchung aus einer Alex-Antwort verarbeiten ----------------------------

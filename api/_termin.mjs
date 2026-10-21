@@ -166,9 +166,9 @@ export async function medienHochladen(base64) {
 // Stunden nach der letzten Nachricht des Empfaengers zu. Schreibt der
 // Inhaber laenger nichts, kaeme eine Terminmeldung sonst STILL nicht an.
 // Greift nur, wenn RESEND_API_KEY gesetzt ist - sonst passiert nichts.
-export async function sendMail(betreff, text) {
+export async function sendMail(betreff, text, empfaenger) {
   const key = process.env.RESEND_API_KEY;
-  const an = process.env.NOTFALL_MAIL || "schaden@alb.berlin";
+  const an = empfaenger || process.env.NOTFALL_MAIL || "schaden@alb.berlin";
   if (!key) return false;
   try {
     const r = await fetchMitZeit("https://api.resend.com/emails", {
@@ -220,6 +220,118 @@ export async function sendWA(to, body) {
 export function inhaberNummern() {
   return (process.env.OWNER_NUMBERS || "")
     .split(",").map(s => s.replace(/\D/g, "")).filter(Boolean);
+}
+
+// ---- Zustellung an den Inhaber, dreistufig -------------------------
+// Warum: WhatsApp erlaubt freie Nachrichten nur bis 24 Stunden nach der
+// letzten Nachricht des Empfaengers. Schreibt Dirk einen Tag lang nicht,
+// blockt Meta jede Meldung an ihn. Frueher kam sie dann erst an, wenn
+// Dirk selbst schrieb - fuer ihn sah es aus, als melde sich Alex nie.
+//
+//   Stufe 1: frei senden (klappt, wenn Dirk in den letzten 24 h schrieb)
+//   Stufe 2: Meldung aufheben und Dirk mit einer genehmigten Vorlage
+//            anstupsen ("Neue Meldung von Alex: ..."). Tippt er auf
+//            "Alles anzeigen", oeffnet das das Fenster und Alex liefert
+//            alles Aufgehobene nach (inhaberNachliefern).
+//   Stufe 3: keine Vorlage oder Vorlage abgelehnt -> E-Mail.
+// Pro Nummer hoechstens ein Anstupser alle 3 Stunden; alles dazwischen
+// sammelt sich und kommt mit dem einen Tipp.
+const ANSTUPSER_PAUSE_MS = 3 * 3600000;
+
+// Meta erlaubt in Vorlagen-Feldern keine Zeilenumbrueche, Tabs und keine
+// langen Leerzeichenketten.
+export function vorlagenFeld(s, max = 200) {
+  return String(s || "").replace(/[\r\n\t]+/g, " · ").replace(/\s{2,}/g, " ")
+    .replace(/^[\s·]+|[\s·]+$/g, "").slice(0, max) || "neue Meldung";
+}
+
+export async function sendWAVorlage(to, name, params) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID || !name) return false;
+  try {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp", to, type: "template",
+        template: { name, language: { code: "de" },
+          components: [{ type: "body", parameters: (params || []).map(t => ({ type: "text", text: vorlagenFeld(t, 900) })) }] }
+      })
+    }, NETZ_ZEITLIMIT_MS);
+    if (!r.ok) console.error("vorlage", name, r.status, await r.text().catch(() => ""));
+    return r.ok;
+  } catch (e) { console.error("vorlage", e && e.message); return false; }
+}
+
+// Aussetzer mit Uhrzeit und Grund merken (fuer "Status").
+export async function fehlerLog(art, grund) {
+  try {
+    const l = await jsonLesen("fehlerlog", []);
+    l.push({ ts: Date.now(), art, grund: String(grund || "").slice(0, 160) });
+    await jsonSchreiben("fehlerlog", l.slice(-30));
+  } catch (_) {}
+}
+
+export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder = [] } = {}) {
+  const nummern = inhaberNummern();
+  if (!nummern.length) return false;
+  const titel = vorlagenFeld(kurz || String(text).split("\n")[0], 120);
+  let irgendwo = false;
+
+  for (const n of nummern) {
+    // Stufe 1
+    if (await sendWA(n, String(text).slice(0, 3900))) {
+      for (const id of (bilder || [])) await sendWABild(n, id, titel);
+      irgendwo = true;
+      continue;
+    }
+    // Stufe 2: aufheben + anstupsen
+    const liste = await jsonLesen("unzugestellt:" + n, []);
+    liste.push({ text: String(text).slice(0, 3900), bilder: bilder || [], ts: Date.now() });
+    await jsonSchreiben("unzugestellt:" + n, liste.slice(-40), 14 * 86400);
+
+    const vorlage = art === "tagesstart"
+      ? (process.env.WA_VORLAGE_TAGESSTART || process.env.WA_VORLAGE_INHABER)
+      : process.env.WA_VORLAGE_INHABER;
+    let angestupst = false;
+    if (vorlage) {
+      const zuletzt = Number(await redis("GET", "anstupser:" + n)) || 0;
+      if (Date.now() - zuletzt < ANSTUPSER_PAUSE_MS) {
+        angestupst = true;     // schon angestupst, kommt mit dem naechsten Tipp
+      } else if (await sendWAVorlage(n, vorlage, [titel])) {
+        await redis("SET", "anstupser:" + n, String(Date.now()), "EX", 86400);
+        angestupst = true;
+      } else {
+        await fehlerLog("vorlage", "Vorlage " + vorlage + " von WhatsApp abgelehnt");
+      }
+    }
+    if (angestupst) { irgendwo = true; continue; }
+
+    // Stufe 3: E-Mail
+    const ok = await sendMail("Alex: " + titel.slice(0, 80), String(text) +
+      "\n\n――――――――――――\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
+      "nicht zustellen konnte. Sobald du Alex kurz schreibst, kommt alles " +
+      "Liegengebliebene auch dort an.");
+    if (ok) irgendwo = true;
+    else await fehlerLog("zustellung", "Meldung an Inhaber weder per WhatsApp noch per E-Mail zugestellt: " + titel);
+  }
+  return irgendwo;
+}
+
+// Alles Aufgehobene ausliefern, sobald der Inhaber schreibt (dann ist das
+// 24-Stunden-Fenster offen). Rueckgabe: Anzahl ausgelieferter Meldungen.
+export async function inhaberNachliefern(n) {
+  const liste = await jsonLesen("unzugestellt:" + n, []);
+  if (!liste.length) return 0;
+  let geliefert = 0;
+  for (const e of liste) {
+    const kopf = liste.length > 1 ? "📬 Liegengeblieben (" + (geliefert + 1) + "/" + liste.length + ")\n" : "📬 Liegengeblieben\n";
+    if (!(await sendWA(n, kopf + e.text))) break;
+    for (const id of (e.bilder || [])) await sendWABild(n, id, vorlagenFeld(e.text.split("\n")[0], 120));
+    geliefert++;
+  }
+  await jsonSchreiben("unzugestellt:" + n, liste.slice(geliefert), 14 * 86400);
+  if (geliefert) await redis("DEL", "anstupser:" + n);
+  return geliefert;
 }
 
 // ---- Datum lesbar machen ------------------------------------------
@@ -300,6 +412,8 @@ export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, t
     return true;
   }
 
+  // Fotos zuerst frei senden; klappt das nicht, uebernimmt die
+  // dreistufige Zustellung (Bilder werden mit aufgehoben).
   let zugestellt = false;
   for (const n of nummern) {
     for (let i = 0; i < ids.length; i++) {
@@ -310,10 +424,8 @@ export async function leiteBilderWeiter({ kanal, mediaIds, base64Bilder, name, t
     }
   }
   if (!zugestellt) {
-    await sendMail("Kunde hat Fotos geschickt (WhatsApp nicht zustellbar)",
-      wer + "\n\n" + (hinweis || "") + "\n\n" +
-      ids.length + " Bild(er) konnten nicht per WhatsApp zugestellt werden. " +
-      "Schreiben Sie Alex kurz etwas, dann läuft es wieder über WhatsApp.");
+    zugestellt = await zustellenAnInhaber("📷 Kunde hat Fotos geschickt\n" + unterschrift,
+      { kurz: "Fotos von " + (name && name !== "Name nicht genannt" ? name : "einem Kunden"), bilder: ids });
   }
   return zugestellt;
 }
@@ -382,37 +494,20 @@ export async function warteschlangeZustellen() {
   if (!nummern.length) return false;
 
   const kopf = liste.length === 1
-    ? "Das kam außerhalb der Bürozeit rein:\n――――――――――――\n"
-    : "Das kam außerhalb der Bürozeit rein (" + liste.length + " Vorgänge):\n" +
+    ? "🌙 Kam heute Nacht rein:\n――――――――――――\n"
+    : "🌙 Kam heute Nacht rein (" + liste.length + " Meldungen):\n" +
       "――――――――――――\n";
   const text = kopf + liste.map(e => e.text).join("\n\n――――――――――――\n");
 
-  let zugestellt = false;
-  for (const n of nummern) {
-    if (await sendWA(n, text.slice(0, 3900))) zugestellt = true;
-  }
-  // Zurückgehaltene Bilder hinterherschicken. Die Medien-Kennung bleibt
-  // bei Meta gültig, wir haben nichts gespeichert.
-  if (zugestellt) {
-    for (const e of liste) {
-      for (const id of (e.bilder || [])) {
-        for (const n of nummern) {
-          await sendWABild(n, id, "Nachgereicht: " +
-            String(e.text || "").split("\n")[1] || "Kundenfoto");
-        }
-      }
-    }
-    await jsonSchreiben("wartend", []);
-    return true;
-  }
-  // Zustellung nicht möglich (24-Stunden-Fenster zu). Liste behalten und
-  // erst nach 12 Stunden per E-Mail nachreichen, statt sie zu verlieren.
-  const aeltest = Math.min(...liste.map(e => e.ts || Date.now()));
-  if (Date.now() - aeltest > 12 * 3600000) {
-    await sendMail("Offene Anfragen (WhatsApp nicht zustellbar)", text);
-    await jsonSchreiben("wartend", []);
-  }
-  return false;
+  const bilder = liste.flatMap(e => e.bilder || []);
+  const ok = await zustellenAnInhaber(text, {
+    kurz: liste.length === 1 ? String(liste[0].text || "").split("\n")[0] : liste.length + " Meldungen aus der Nacht",
+    bilder
+  });
+  // Die Zustellung hebt Nicht-Zustellbares selbst auf, die Nachtliste
+  // kann deshalb in jedem Fall geleert werden.
+  await jsonSchreiben("wartend", []);
+  return ok;
 }
 
 // ---- Angefangene, nicht beendete Gespraeche -------------------------
@@ -496,10 +591,7 @@ export async function offeneGespraecheMelden() {
     await warteschlangeAnhaengen(text);
     zugestellt = true;                       // kommt am Morgen mit
   } else {
-    for (const n of inhaberNummern()) {
-      if (await sendWA(n, text.slice(0, 3900))) zugestellt = true;
-    }
-    if (!zugestellt) await sendMail("Offene Anfragen im Chat", text);
+    zugestellt = await zustellenAnInhaber(text, { kurz: reif.length + " Kunde(n) ohne Abschluss im Chat" });
   }
   // Gemeldete Sitzungen schliessen, damit sie nicht doppelt kommen
   for (const { s } of reif) await redis("DEL", "offen:" + s);
@@ -574,7 +666,7 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
       (vorhanden.kanal === "whatsapp"
         ? "Antworten Sie mit \"Termin " + vorhanden.nr + " passt\"."
         : "Kam über die Website, bitte selbst melden.");
-    for (const n of nummern) await sendWA(n, text);
+    await zustellenAnInhaber(text, { kurz: "Terminänderung Nr. " + vorhanden.nr });
     return true;
   }
 
@@ -627,21 +719,7 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
     return true;
   }
 
-  let zugestellt = false;
-  for (const n of nummern) {
-    if (await sendWA(n, meldung)) zugestellt = true;
-  }
-  // Kam die Meldung bei niemandem an (meist: seit über 24 Stunden keine
-  // Nachricht vom Inhaber, WhatsApp blockt dann frei formulierte Texte),
-  // geht sie per E-Mail raus. Sonst ginge eine Terminanfrage still verloren.
-  if (!zugestellt) {
-    await sendMail("Neue Terminanfrage Nr. " + nr + " (WhatsApp nicht zustellbar)",
-      meldung + "\n\n――――――――――――\n" +
-      "Diese Meldung kam per E-Mail, weil WhatsApp sie nicht zustellen konnte. " +
-      "Das passiert, wenn seit mehr als 24 Stunden keine Nachricht an Alex " +
-      "geschickt wurde. Schreiben Sie Alex kurz etwas, dann läuft es wieder " +
-      "über WhatsApp.");
-  }
+  const zugestellt = await zustellenAnInhaber(meldung, { kurz: "Neue Terminanfrage Nr. " + nr });
   return true;
 }
 

@@ -135,14 +135,15 @@ export default async function handler(req, res) {
     }, MODELL_START_MS);
   } catch (e) {
     console.error("Anthropic fetch", e && e.name, e && e.message);
-    fehlerZaehlen("modell").catch(() => {});
+    fehlerZaehlen("modell", "Web-Chat: KI nicht erreichbar (" + ((e && (e.name === "AbortError" ? "Zeitlimit 25 s" : e.message)) || "?") + ")").catch(() => {});
     sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
 
   if (!upstream.ok) {
-    console.error("Anthropic API", upstream.status, await upstream.text().catch(() => ""));
-    fehlerZaehlen("modell").catch(() => {});
+    const fehlerText = await upstream.text().catch(() => "");
+    console.error("Anthropic API", upstream.status, fehlerText);
+    fehlerZaehlen("modell", "Web-Chat: KI meldet Fehler " + upstream.status + " " + fehlerText.slice(0, 80)).catch(() => {});
     sseWrite(res, NICHT_ERREICHBAR);
     res.write("data: [DONE]\n\n"); res.end(); return;
   }
@@ -200,9 +201,9 @@ export default async function handler(req, res) {
   //      [[TERMIN]]), die das Widget entfernt. Passiert gern nach der
   //      letzten eingesammelten Angabe: Daten notiert, kein Wort dazu.
   const sichtbar = markerRaus(answer).trim();
-  if (abgebrochen) fehlerZaehlen("strom").catch(() => {});
+  if (abgebrochen) fehlerZaehlen("strom", "Web-Chat: Antwort brach nach " + answer.length + " Zeichen ab").catch(() => {});
   if (!sichtbar) {
-    if (!abgebrochen) fehlerZaehlen("leer").catch(() => {});
+    if (!abgebrochen) fehlerZaehlen("leer", "Web-Chat: KI-Antwort ohne sichtbaren Text").catch(() => {});
     const hatDaten = RE_KONTAKT.test(answer) || RE_KVA.test(answer) || RE_TERMIN.test(answer);
     const notsatz = abgebrochen && !answer
       ? NICHT_ERREICHBAR

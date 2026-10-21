@@ -21,6 +21,56 @@ Die Genehmigung dauert meist Minuten bis wenige Stunden. Danach den
 **Vorlagennamen** als Umgebungsvariable in Vercel eintragen (Namen unten)
 und neu ausrollen.
 
+**Regeln, die sich bewährt haben:**
+- Kategorie **Verwaltung** (englisch „Utility"). Aufforderungen wie
+  „Antworten Sie kurz" führen dazu, dass Meta auf „Marketing" umstuft,
+  deshalb neutral formulieren.
+- Der Text darf **nicht mit einem Platzhalter beginnen oder enden**.
+- Eine Vorlage **nie löschen**, wenn Meta sie umstuft: Der Name ist danach
+  vier Wochen gesperrt. Lieber so lassen oder mit neuem Namen neu anlegen.
+- Bei jedem Platzhalter verlangt Meta einen Beispielwert. Die Beispiele
+  stehen unten jeweils dabei.
+
+---
+
+# ZUERST: die zwei Vorlagen für Dirk (das Wichtigste)
+
+Ohne diese zwei kommt bei Dirk nur dann etwas an, wenn er Alex in den
+letzten 24 Stunden selbst geschrieben hat. Mit ihnen stupst Alex ihn
+an, und ein Tipp auf „Alles anzeigen" liefert alles Liegengebliebene.
+
+## A. Meldungen an Dirk
+
+Name: `kundenmeldung_alex` → Vercel-Variable **`WA_VORLAGE_INHABER`**
+
+> Es liegt eine neue Meldung von Alex vor: {{1}}. Die vollständigen
+> Angaben und etwaige Fotos stehen im Chat mit Alex.
+
+Beispielwert für {{1}}: `Neuer Termin (Nr. 4) · Freitag, 23.10. 11–13 Uhr`
+
+Schaltfläche hinzufügen: **Schnellantwort** mit dem Text **`Alles anzeigen`**
+
+## B. Tagesüberblick am Morgen
+
+Name: `tagesueberblick_alex` → Vercel-Variable **`WA_VORLAGE_TAGESSTART`**
+
+> Guten Morgen, hier der Tagesüberblick von Alex: {{1}}. Einzelheiten
+> erscheinen mit einem Tipp auf „Alles anzeigen".
+
+Beispielwert für {{1}}: `2 Termine heute, 1 Anfrage wartet auf dein Angebot`
+
+Schaltfläche hinzufügen: **Schnellantwort** mit dem Text **`Alles anzeigen`**
+
+Wird nur A genehmigt, reicht das: Alex nimmt A dann auch für den
+Tagesüberblick.
+
+Prüfen: Dirk (oder du) schreibt Alex „Status". Unter „Zustellung an
+dich" steht dann der Vorlagenname statt „FEHLT".
+
+---
+
+# Später: Vorlagen für Kunden
+
 ---
 
 ## 1. Übergabe aus dem Website-Chat

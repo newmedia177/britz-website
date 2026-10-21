@@ -10,7 +10,7 @@
 // E-Mail-Adressen, FIN, Kennzeichen und IBAN-artige Ketten ersetzt.
 // Fotos werden nie gespeichert. Aufbewahrung LERN_TAGE Tage.
 
-import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA,
+import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, zustellenAnInhaber,
          istRuhezeit, fetchMitZeit, RE_KONTAKT } from "./_termin.mjs";
 
 export const LERN_INTERVALL = 10;   // Gespraeche bis zur naechsten Runde
@@ -179,7 +179,7 @@ async function anInhaber(text) {
     await jsonSchreiben("wartend", liste.slice(-30));
     return;
   }
-  for (const n of inhaberNummern()) await sendWA(n, text.slice(0, 3900));
+  await zustellenAnInhaber(text, { kurz: "Auswertung der letzten Gespräche liegt vor" });
 }
 
 // ---- Freigabe-Befehle (aus whatsapp.js aufgerufen) -----------------

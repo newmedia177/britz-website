@@ -22,7 +22,7 @@ import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
          warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
-         gespraechMerken, sendWA, offeneGespraecheMelden,
+         gespraechMerken, sendWA, offeneGespraecheMelden, inhaberNachliefern,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -101,6 +101,11 @@ async function verarbeite(req) {
     const img = await fetchWhatsAppMedia(msg.image?.id);
     if (img) images.push(img);
     if (msg.image?.id) mediaIds.push(msg.image.id);
+  } else if (msg.type === "button") {
+    // Tipp auf einen Knopf unter einer Vorlage, z. B. "Alles anzeigen"
+    text = (msg.button?.text || msg.button?.payload || "").slice(0, 200);
+  } else if (msg.type === "interactive") {
+    text = (msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "").slice(0, 200);
   } else {
     await sendWhatsApp(from,
       "Das Format kann ich hier leider nicht öffnen. Schicken Sie mir " +
@@ -111,8 +116,18 @@ async function verarbeite(req) {
 
   // ---- Inhaber: einmal am Tag kurz begrüßen und Stand melden -----
   if (isOwner(from)) {
-    const briefing = await tagesBriefing(from);
-    if (briefing) await sendWhatsApp(from, briefing);
+    // Dirk schreibt oder tippt "Alles anzeigen": Das 24-Stunden-Fenster
+    // ist jetzt offen, also kommt alles Liegengebliebene sofort.
+    const nachgeliefert = await inhaberNachliefern(from).catch(() => 0);
+    if (/^(alles anzeigen|anzeigen|zeig alles)$/i.test(String(text).trim())) {
+      if (!nachgeliefert) await sendWhatsApp(from, "Es liegt nichts mehr an, du bist auf dem neuesten Stand.");
+      return;
+    }
+
+    // Der alte Tagesgruss (tagesBriefing) ist abgeschaltet: Er las noch die
+    // Terminliste von vor der Direktbuchung und meldete deshalb "nichts
+    // Offenes", obwohl Termine gebucht waren. Den Ueberblick liefert jetzt
+    // allein das Morgenbriefing (weckerAufgaben).
 
     // ---- Uebernahme / Mitlesen ------------------------------------
     const ueb = await uebernahmeBefehl(from, text);
@@ -362,7 +377,7 @@ async function verarbeite(req) {
   // und fragen NICHT "anders formulieren" (das waere nach gelieferten
   // Daten ein Schlag ins Gesicht).
   if (!reply) {
-    await fehlerZaehlen("leer").catch(() => {});
+    await fehlerZaehlen("leer", "WhatsApp: KI-Antwort ohne sichtbaren Text").catch(() => {});
     reply = hatteDaten
       ? "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
         RUECKMELDUNG + " Die Antwort kommt hier. Sie müssen nichts weiter tun."
@@ -655,6 +670,7 @@ async function handleOwnerCommand(from, text) {
     const lesen = await redis("GET", marke);
     const verlauf = await memGet(from);
     const notizen = await notesGet();
+    const fehler = await jsonLesen("fehlerlog", []);
     const u = speicherUrl();
     const tk = speicherToken();
     await sendWhatsApp(from,
@@ -669,7 +685,15 @@ async function handleOwnerCommand(from, text) {
       "Lesen: " + (lesen === "ok" ? "ok" :
         (lesen === undefined ? "FEHLER" : String(lesen))) + "\n" +
       "Gespeicherte Gesprächsschritte: " + verlauf.length + "\n" +
-      "Notizen: " + notizen.length);
+      "Notizen: " + notizen.length + "\n\n" +
+      "Zustellung an dich\n――――――――――――\n" +
+      "Vorlage für Meldungen: " + (process.env.WA_VORLAGE_INHABER ? process.env.WA_VORLAGE_INHABER : "FEHLT (Meldungen kommen nur, wenn du in den letzten 24 Std. geschrieben hast)") + "\n" +
+      "Vorlage Tagesstart: " + (process.env.WA_VORLAGE_TAGESSTART || "keine eigene (nutzt die für Meldungen)") + "\n" +
+      "E-Mail-Notweg: " + (process.env.RESEND_API_KEY ? "an " + (process.env.NOTFALL_MAIL || "schaden@alb.berlin") : "AUS") + "\n\n" +
+      "Letzte Aussetzer\n――――――――――――\n" +
+      (fehler.length
+        ? fehler.slice(-6).reverse().map(f => new Date(f.ts).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }) + " · " + f.art + (f.grund ? " · " + f.grund : "")).join("\n")
+        : "keine"));
     return true;
   }
 

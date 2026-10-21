@@ -9,7 +9,7 @@
 // nicht erlaubt (24-Stunden-Fenster ohne genehmigte Vorlage), sagt Alex
 // das offen und gibt Dirk den fertigen Text zum Selbstschicken.
 
-import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail,
+import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail, zustellenAnInhaber, fehlerLog,
          istRuhezeit, fetchMitZeit, rufnummerPruefen, RE_KONTAKT, RE_KVA,
          RE_TERMIN } from "./_termin.mjs";
 
@@ -139,18 +139,11 @@ async function sendWAVorlage(to, name, params) {
   } catch (e) { console.error("vorlage", e && e.message); return false; }
 }
 
-async function anInhaber(text) {
-  const wartend = istRuhezeit();
-  if (wartend) {
-    const l = await jsonLesen("wartend", []);
-    l.push({ text, bilder: [], ts: Date.now() });
-    await jsonSchreiben("wartend", l.slice(-30));
-    return true;
-  }
-  let ok = false;
-  for (const n of inhaberNummern()) if (await sendWA(n, text.slice(0, 3900))) ok = true;
-  if (!ok) await sendMail("Alex: Meldung nicht zustellbar", text);
-  return ok;
+async function anInhaber(text, kurz, art) {
+  // Briefing und Wochenbericht entstehen nur tagsueber (siehe
+  // weckerAufgaben), deshalb hier keine Nachtliste mehr: Sie kaemen sonst
+  // Stunden spaeter mit dem irrefuehrenden Kopf "kam nachts rein".
+  return zustellenAnInhaber(text, { kurz, art });
 }
 
 function zeile(a) {
@@ -282,15 +275,17 @@ async function protokoll(tag) {
 }
 
 // ---- Fehlerzaehler (fuer Wochenbericht und Stoerungsmeldung) ------------
-export async function fehlerZaehlen(art) {
+export async function fehlerZaehlen(art, grund) {
   const tag = berlinJetzt().datum;
   const n = Number(await redis("INCR", "fehler:" + tag + ":" + art)) || 0;
   await redis("EXPIRE", "fehler:" + tag + ":" + art, 8 * 86400);
-  // Ab 5 Ausfaellen am Tag: Stoerungsmeldung an die Agentur, einmal.
-  if (n === 5) {
-    await sendMail("Alex: Störung – " + art + " heute " + n + "×",
-      "Der Assistent musste heute " + n + "-mal auf einen Notsatz ausweichen (" + art + "). " +
-      "Bitte Vercel-Logs und Upstash/Anthropic-Status prüfen.");
+  await fehlerLog(art, grund || "");
+  // Erster Aussetzer des Tages: kurze Mail an die Technik (nicht an Dirk).
+  if (n === 1 && await einmalHeute("technikmail")) {
+    await sendMail("Alex: technischer Aussetzer (" + art + ")",
+      "Alex musste heute auf einen Notsatz ausweichen.\nArt: " + art + "\nGrund: " + (grund || "unbekannt") +
+      "\n\nAlle Aussetzer mit Uhrzeit: per WhatsApp \"Status\" an Alex.",
+      process.env.TECHNIK_MAIL || process.env.NOTFALL_MAIL);
   }
   return n;
 }
@@ -331,7 +326,7 @@ export async function weckerAufgaben() {
   const erledigt = [];
 
   // 1) Morgenbriefing, Werktage ab 8 Uhr
-  if (werktag && j.stunde >= 8 && await einmalHeute("briefing")) {
+  if (werktag && j.stunde >= 8 && !istRuhezeit() && await einmalHeute("briefing")) {
     const liste = await alleLaden();
     const offen = liste.filter(a => !["erledigt", "gespraech"].includes(a.status));
     const wartend = offen.filter(a => a.status === "neu");
@@ -364,7 +359,9 @@ export async function weckerAufgaben() {
     const still = angebote.filter(a => a.angebotTs && Date.now() - a.angebotTs > NACHFASS_TAGE * 86400000 && !a.nachgefasst);
     if (still.length) text += "\n\nStill seit " + NACHFASS_TAGE + " Tagen nach dem Angebot: " + still.map(a => "Nr. " + a.nr).join(", ") + ". Soll ich nachfassen? → \"Nachfassen " + still[0].nr + "\"";
     text += "\n\n\"Anfragen\" zeigt alles im Detail.";
-    await anInhaber(text);
+    const kurzB = (heute.length ? heute.length + " Termin(e) heute" : "Heute keine Termine") +
+      (wartend.length ? ", " + wartend.length + " Anfrage(n) warten auf dein Angebot" : "");
+    await anInhaber(text, kurzB, "tagesstart");
     erledigt.push("briefing");
   }
 
@@ -372,7 +369,7 @@ export async function weckerAufgaben() {
   // Freitag ab 16 Uhr. Laeuft der Wecker nur einmal am Tag (Vercel Hobby,
   // morgens) und gab es freitags nach 16 Uhr keine Nachricht, kommt der
   // Bericht am Samstagmorgen.
-  if (((j.wochentag === 5 && j.stunde >= 16) || j.wochentag === 6) && await einmalDieseWoche("wochenbericht")) {
+  if (((j.wochentag === 5 && j.stunde >= 16) || j.wochentag === 6) && !istRuhezeit() && await einmalDieseWoche("wochenbericht")) {
     const liste = await alleLaden();
     const woche = Date.now() - 7 * 86400000;
     const neu = liste.filter(a => a.ts > woche && a.status !== "gespraech");
@@ -389,9 +386,9 @@ export async function weckerAufgaben() {
       "Noch offen gesamt: " + liste.filter(a => !["erledigt", "gespraech"].includes(a.status)).length + "\n" +
       (k ? "Letzte Auswertung (" + k.d + "): Abschlüsse " + k.mit_abschluss + ", Abbrüche " + k.abbrueche + ", Schleifen " + k.schleifen + "\n" : "") +
       "Gelernte Regeln aktiv: " + aktiv.length + (offenVorschlaege.length ? " · " + offenVorschlaege.length + " Vorschläge warten auf dein Ok (\"Lernen\")" : "") + "\n" +
-      "Technische Aussetzer diese Woche: " + fehler + (fehler ? " (Julian ist informiert)" : "") +
+      "Technische Aussetzer diese Woche: " + fehler + (fehler ? " (Einzelheiten: \"Status\")" : "") +
       "\n\nSchönes Wochenende!";
-    await anInhaber(text);
+    await anInhaber(text, "Wochenbericht: " + neu.length + " neue Anfrage(n), " + erl.length + " abgeschlossen");
     erledigt.push("wochenbericht");
   }
 
