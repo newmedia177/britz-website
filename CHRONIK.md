@@ -3,6 +3,7 @@
 Neueste oben. Wird ab jetzt von scripts/version.mjs gepflegt.
 Die Nummer zählt nur hoch, nie zurück.
 
+- **16** · 29.10.2026 · Leere KI-Antwort: zweiter Versuch vor dem Notsatz, Ersatztext passend zur Lage (Termin, Kostenvoranschlag, Dirk geduzt), Zeitlimit für die KI auf WhatsApp, verständliche Fehlermail mit Handlungsbedarf
 - **15** · 22.10.2026 · Neue Bilder: Lackierkabine (Abschnitt „Erfahrung") und Hof-Einfahrt, neue Dateinamen wegen Browser-Cache
 - **14** · 22.10.2026 · Zustellung an Dirk dreistufig (frei, Meta-Vorlage mit „Alles anzeigen", E-Mail), falscher Tagesgruß „nichts Offenes" entfernt, Fehlerliste unter „Status", Wochenbericht korrigiert, Testreihe tests/alex-test.mjs im Projekt
 - **13** · 30.09.2026 · Mitlesen + Übernahme für Dirk, WhatsApp-Absturz seit 08.09. behoben, KV-Rückmeldung als Team-Formulierung, Walk-in-Regel, Wecker an Vercel-Hobby angepasst (täglich + bei jeder Nachricht)

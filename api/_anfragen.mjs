@@ -275,16 +275,29 @@ async function protokoll(tag) {
 }
 
 // ---- Fehlerzaehler (fuer Wochenbericht und Stoerungsmeldung) ------------
-export async function fehlerZaehlen(art, grund) {
+const ART_KLAR = {
+  leer: "Die KI hat geantwortet, aber ohne Text für den Gesprächspartner – auch ein zweiter Versuch blieb leer.",
+  modell: "Die KI war nicht erreichbar oder hat mit einem Fehler geantwortet.",
+  strom: "Die Antwort im Website-Chat ist mittendrin abgebrochen.",
+  zustellung: "Eine Meldung an Dirk kam weder per WhatsApp noch per E-Mail an.",
+  vorlage: "WhatsApp hat eine Nachrichtenvorlage abgelehnt."
+};
+
+export async function fehlerZaehlen(art, grund, ersatz) {
   const tag = berlinJetzt().datum;
   const n = Number(await redis("INCR", "fehler:" + tag + ":" + art)) || 0;
   await redis("EXPIRE", "fehler:" + tag + ":" + art, 8 * 86400);
   await fehlerLog(art, grund || "");
-  // Erster Aussetzer des Tages: kurze Mail an die Technik (nicht an Dirk).
+  // Erster Aussetzer des Tages: kurze, verstaendliche Mail an die Technik
+  // (nicht an Dirk). Weitere stehen unter "Status".
   if (n === 1 && await einmalHeute("technikmail")) {
-    await sendMail("Alex: technischer Aussetzer (" + art + ")",
-      "Alex musste heute auf einen Notsatz ausweichen.\nArt: " + art + "\nGrund: " + (grund || "unbekannt") +
-      "\n\nAlle Aussetzer mit Uhrzeit: per WhatsApp \"Status\" an Alex.",
+    await sendMail("Alex: Aussetzer heute – " + (ersatz ? "Gesprächspartner hat eine Ersatzantwort bekommen" : "bitte kurz prüfen"),
+      "Was passiert ist:\n" + (ART_KLAR[art] || art) + "\n\n" +
+      "Einzelheiten:\n" + (grund || "keine") + "\n\n" +
+      (ersatz ? "Was stattdessen geschickt wurde:\n„" + String(ersatz).slice(0, 300) + "“\n\n" +
+                "Handlungsbedarf: keiner, das Gespräch ist nicht abgerissen. Häufen sich solche Fälle, bitte melden.\n\n"
+              : "Handlungsbedarf: bitte prüfen.\n\n") +
+      "Alle Aussetzer mit Uhrzeit: per WhatsApp „Status“ an Alex. Weitere Mails kommen heute nicht.",
       process.env.TECHNIK_MAIL || process.env.NOTFALL_MAIL);
   }
   return n;

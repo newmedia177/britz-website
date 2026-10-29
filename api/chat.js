@@ -203,11 +203,14 @@ export default async function handler(req, res) {
   const sichtbar = markerRaus(answer).trim();
   if (abgebrochen) fehlerZaehlen("strom", "Web-Chat: Antwort brach nach " + answer.length + " Zeichen ab").catch(() => {});
   if (!sichtbar) {
-    if (!abgebrochen) fehlerZaehlen("leer", "Web-Chat: KI-Antwort ohne sichtbaren Text").catch(() => {});
+    if (!abgebrochen) fehlerZaehlen("leer", "Web-Chat, Kunde: KI-Antwort ohne sichtbaren Text (Marker=" +
+      ((answer.match(/\[\[([A-Z_]+)\|/g) || []).map(m => m.slice(2, -1)).join(",") || "keine") + ")").catch(() => {});
     const hatDaten = RE_KONTAKT.test(answer) || RE_KVA.test(answer) || RE_TERMIN.test(answer);
     const notsatz = abgebrochen && !answer
       ? NICHT_ERREICHBAR
-      : (hatDaten ? ABSCHLUSS_NOTSATZ : NACHFASS_NOTSATZ);
+      : /\[\[BUCHUNG\|/.test(answer)
+        ? "Danke, Ihr Termin ist eingetragen. Die Einzelheiten sehen Sie gleich hier."
+        : (hatDaten ? ABSCHLUSS_NOTSATZ : NACHFASS_NOTSATZ);
     answer = notsatz + "\n" + answer;
     sseWrite(res, notsatz);
   } else if (abgebrochen) {

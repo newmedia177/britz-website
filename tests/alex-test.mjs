@@ -14,7 +14,7 @@ process.env.RESEND_API_KEY = "r";
 process.env.TEST_LEERLAUF_MS = "1500";
 
 const DIRK = "491700000001", KUNDE = "4917612345678";
-let sp = {}, gesendet = [], fensterOffen = true, kiAntwort = "Gern.", kiStrom = null;
+let sp = {}, gesendet = [], fensterOffen = true, kiAntwort = "Gern.", kiStrom = null, kiFolge = [];
 const enc = new TextEncoder();
 
 global.fetch = async (u, o = {}) => {
@@ -38,7 +38,8 @@ global.fetch = async (u, o = {}) => {
         if (i < teile.length) c.enqueue(enc.encode("data: " + JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: teile[i++] } }) + "\n\n"));
         else c.close(); } }) };
     }
-    return { ok: true, json: async () => ({ content: [{ type: "text", text: kiAntwort }], stop_reason: "end_turn" }) };
+    const t = kiFolge.length ? kiFolge.shift() : kiAntwort;
+    return { ok: true, json: async () => ({ content: t === "" ? [] : [{ type: "text", text: t }], stop_reason: "end_turn" }) };
   }
   if (u.includes("/messages")) {
     const b = JSON.parse(o.body);
@@ -51,7 +52,7 @@ global.fetch = async (u, o = {}) => {
 
 const R = Date;
 const uhr = iso => { global.Date = class extends R { constructor(...a) { if (a.length) super(...a); else super(iso); } static now() { return new R(iso).getTime(); } }; };
-const reset = () => { sp = {}; gesendet = []; fensterOffen = true; kiAntwort = "Gern."; kiStrom = null; };
+const reset = () => { sp = {}; gesendet = []; fensterOffen = true; kiAntwort = "Gern."; kiStrom = null; kiFolge = []; };
 
 const stumm = console.error; console.error = () => {};
 const log = console.log; console.log = () => {};
@@ -141,6 +142,26 @@ pruefe("nicht zu frueh gemeldet", (await T.offeneGespraecheMelden()) === 0);
 uhr("2026-10-22T10:40:00Z");
 pruefe("nach 40 Min gemeldet", (await T.offeneGespraecheMelden()) === 1);
 pruefe("kein Doppel", (await T.offeneGespraecheMelden()) === 0);
+
+// ---- 6. Leere KI-Antwort ---------------------------------------------
+log("\n6. Leere KI-Antwort");
+reset(); uhr("2026-10-22T09:00:00Z");
+kiFolge = ["", "Gern, schicken Sie mir ein Foto vom Schaden."];
+await waNachricht(KUNDE, "Hallo");
+pruefe("leer -> zweiter Versuch erreicht den Kunden", gesendet.some(g => g.an === "kunde" && /Foto vom Schaden/.test(g.text)));
+pruefe("behobener Fall: keine Technik-Mail", !gesendet.some(g => g.an === "mail"));
+pruefe("behobener Fall steht in der Fehlerliste", JSON.parse(sp["fehlerlog"] || "[]").some(f => f.art === "leer-behoben"));
+reset(); uhr("2026-10-22T09:00:00Z");
+kiFolge = ["[[KONTAKT|Sommer|01761234567]]\n[[BUCHUNG|2026-10-23|11-13|begutachtung]]", ""];
+await waNachricht(KUNDE, "Freitag 11-13 passt");
+pruefe("zweimal leer nach Buchung -> Terminbestaetigung statt KV-Satz",
+  gesendet.some(g => g.an === "kunde" && /Termin ist eingetragen/.test(g.text)) && !gesendet.some(g => g.an === "kunde" && /Kostenvoranschlag/.test(g.text)));
+pruefe("Buchung trotzdem bei Dirk gemeldet", gesendet.some(g => g.an === "dirk" && /Neuer Termin/.test(g.text)));
+pruefe("Technik-Mail mit Ersatzantwort", gesendet.some(g => g.an === "mail" && /Ersatzantwort/.test(g.text)));
+reset(); uhr("2026-10-22T09:00:00Z");
+kiFolge = ["", ""];
+await waNachricht(DIRK, "Wie sieht es aus?");
+pruefe("Dirk wird geduzt, nicht gesiezt", gesendet.some(g => g.an === "dirk" && /Schreib es mir/.test(g.text)) && !gesendet.some(g => g.an === "dirk" && /Können Sie/.test(g.text)));
 
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));

@@ -23,6 +23,7 @@ import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
          warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
          gespraechMerken, sendWA, offeneGespraecheMelden, inhaberNachliefern,
+         fetchMitZeit, fehlerLog,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen, tagesBriefing,
          speicherUrl, speicherToken } from "./_termin.mjs";
@@ -245,7 +246,10 @@ async function verarbeite(req) {
   }
 
   // ---- Alex antworten lassen ------------------------------------
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  // Zeit- und Buchungskontext einmal berechnen (auch fuer den zweiten Versuch)
+  const kontextZeitBuchung = zeitKontext(await belegteZeiten().catch(() => [])) +
+    (chef ? "" : await buchungKontext());
+  const kiFragen = (zusatz) => fetchMitZeit("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -264,7 +268,7 @@ async function verarbeite(req) {
         // Derselbe Zeit- und Terminkontext wie im Web-Chat. Ohne ihn
         // kennt Alex weder das heutige Datum noch die buchbaren Fenster
         // und versteht Angaben wie "morgen 11 Uhr" nicht.
-        text: zeitKontext(await belegteZeiten().catch(() => [])) + (chef ? "" : await buchungKontext()) + chefBlock +
+        text: kontextZeitBuchung + chefBlock +
           (chef ? "" :
           "\n\nDieser Kunde schreibt über WhatsApp von der Nummer +" + from +
           ". Frag deshalb NICHT nach der Telefonnummer, du hast sie bereits. " +
@@ -291,14 +295,22 @@ async function verarbeite(req) {
           "ich mache die Vorarbeit, entschieden wird dann in der Werkstatt. " +
           "Schicken Sie mir gern ein Foto vom Schaden.\" Formuliere es " +
           "selbst, nicht wörtlich abschreiben. Danach normal weiter und " +
-          "nie wiederholen.") + notesBlock
+          "nie wiederholen.") + notesBlock + (zusatz || "")
       }],
       messages
     })
-  });
+  }, 25000);
+
+  let r;
+  try { r = await kiFragen(); }
+  catch (e) { r = { ok: false, status: 0, text: async () => String(e && e.name) }; }
 
   if (!r.ok) {
-    console.error("Anthropic", r.status, await r.text().catch(() => ""));
+    const fehlerText = await r.text().catch(() => "");
+    console.error("Anthropic", r.status, fehlerText);
+    await fehlerZaehlen("modell", "WhatsApp, " + (chef ? "Inhaber" : "Kunde") + ": KI nicht erreichbar (" +
+      (r.status ? "Fehler " + r.status : "Zeitlimit 25 s") + ")",
+      "Entschuldigung, ich bin gerade nicht erreichbar. Rufen Sie uns gern direkt an …").catch(() => {});
     await sendWhatsApp(from,
       "Entschuldigung, ich bin gerade nicht erreichbar. Rufen Sie uns " +
       "gern direkt an: 030 607 97 930 (Mo–Do 8–17, Fr 8–15 Uhr).");
@@ -377,11 +389,42 @@ async function verarbeite(req) {
   // und fragen NICHT "anders formulieren" (das waere nach gelieferten
   // Daten ein Schlag ins Gesicht).
   if (!reply) {
-    await fehlerZaehlen("leer", "WhatsApp: KI-Antwort ohne sichtbaren Text").catch(() => {});
-    reply = hatteDaten
-      ? "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
-        RUECKMELDUNG + " Die Antwort kommt hier. Sie müssen nichts weiter tun."
-      : "Können Sie das noch einmal anders formulieren?";
+    // Was hat die KI geliefert? Fuer die Fehlerliste, damit man die
+    // Ursache spaeter erkennt.
+    const bloecke = (data.content || []).map(b => b.type).join(",") || "keine";
+    const marker = (rohAntwort.match(/\[\[([A-Z_]+)\|/g) || []).map(m => m.slice(2, -1)).join(",") || "keine";
+    const wer = chef ? "Inhaber" : "Kunde …" + String(from).slice(-4);
+    const technik = "stop_reason=" + (data.stop_reason || "?") + ", Blöcke=" + bloecke + ", Marker=" + marker;
+
+    // Zweiter Versuch: nur den sichtbaren Satz nachfordern. Die Marker
+    // aus dem ersten Versuch bleiben gueltig (Buchung, Kontakt).
+    let zweiter = "";
+    try {
+      const r2 = await kiFragen("\n\nWICHTIG: Deine letzte Antwort enthielt keinen Text für " +
+        (chef ? "Dirk" : "den Kunden") + ". Antworte jetzt mit ein bis zwei kurzen, sichtbaren Sätzen. " +
+        "Keine technischen Marker in dieser Antwort.");
+      if (r2.ok) {
+        const d2 = await r2.json();
+        zweiter = saeubern(markerRaus((d2.content || []).filter(b => b.type === "text").map(b => b.text).join("\n")), true).trim();
+      }
+    } catch (_) {}
+
+    if (zweiter) {
+      reply = zweiter;
+      await fehlerLog("leer-behoben", "WhatsApp, " + wer + ": erste KI-Antwort ohne Text, zweiter Versuch erfolgreich (" + technik + ")");
+    } else {
+      const mB = rohAntwort.match(RE_BUCHUNG);
+      reply = chef
+        ? "Das habe ich gerade nicht hinbekommen. Schreib es mir bitte noch einmal, oder schick \"Hilfe\" für alle Befehle."
+        : mB
+          ? "Danke, Ihr Termin ist eingetragen. Die Einzelheiten und den Kalendereintrag schicke ich Ihnen gleich hier."
+          : hatteDaten
+            ? "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
+              RUECKMELDUNG + " Die Antwort kommt hier. Sie müssen nichts weiter tun."
+            : "Entschuldigung, da ist bei mir gerade etwas hängen geblieben. Schreiben Sie mir Ihre Nachricht bitte noch einmal, " +
+              "oder rufen Sie uns an: 030 607 97 930.";
+      await fehlerZaehlen("leer", "WhatsApp, " + wer + ": KI-Antwort zweimal ohne Text (" + technik + ")", reply).catch(() => {});
+    }
   }
   // Verbindliche Buchung pruefen (harte Regeln im Code). Passt sie,
   // bekommt der Kunde den Kalenderlink; passt sie nicht, die Korrektur
