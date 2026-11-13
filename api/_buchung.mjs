@@ -237,7 +237,7 @@ export async function buchungVerarbeiten({ antwort, kanal, sitzung, kundeNr, nam
 
   const auslastung = belegt + 1;
   await anInhaber(
-    (eigeneAlt ? "Termin umgebucht (Nr. " : "Neuer Termin (Nr. ") + akte.nr + ")\n――――――――――――\n" +
+    (eigeneAlt ? "Termin umgebucht (Nr. " : "Neuer Termin (Nr. ") + akte.nr + ")\n────────\n" +
     datumLesbar(datum) + " " + fensterText(v, b) + " · " + ARTEN[art] +
     (ort === "kleinmachnow" ? " · KLEINMACHNOW" : "") + "\n" +
     (buchung.name || "Name nicht genannt") + (buchung.tel ? " · " + buchung.tel : (buchung.kundeNr ? " · WhatsApp" : "")) + "\n" +
@@ -312,7 +312,7 @@ export async function buchungBefehl(t) {
     const sperr = (await jsonLesen("sperrtage", [])).filter(d => d >= berlin().datum).sort();
     if (!liste.length) return (tag ? "Am " + datumLesbar(tag) + " keine Termine." : "Keine kommenden Termine.") +
       (sperr.length ? "\nGesperrt: " + sperr.slice(0, 8).map(datumLesbar).join(", ") : "");
-    let aus = "Termine\n――――――――――――", tagAlt = "";
+    let aus = "Termine\n────────", tagAlt = "";
     for (const b of liste) {
       if (b.datum !== tagAlt) { aus += "\n" + datumLesbar(b.datum) + " (" + liste.filter(x => x.datum === b.datum).length + "/" + MAX_PRO_TAG + ")"; tagAlt = b.datum; }
       aus += "\n  " + fensterText(b.von, b.bis) + " · Nr. " + b.akteNr + " " + (b.name || "ohne Name") + " · " + ARTEN[b.art].replace("Kostenfreie ", "") +

@@ -158,7 +158,7 @@ export async function lernrunde() {
   const k = ergebnis.kennzahlen || {};
   const bericht =
     "Lernrunde: " + frisch.length + " Gespräche ausgewertet\n" +
-    "――――――――――――\n" +
+    "────────\n" +
     "Mit Abschluss: " + (k.mit_abschluss ?? "?") + " · Abbrüche: " + (k.abbrueche ?? "?") +
     " · Schleifen: " + (k.schleifen ?? "?") + " · Ungeduld: " + (k.ungeduld ?? "?") + "\n" +
     (Array.isArray(ergebnis.gut) && ergebnis.gut.length
@@ -237,7 +237,7 @@ export async function lernBefehl(t) {
   if (/^lernexport$/i.test(s)) {
     const aktiv = await jsonLesen("lern:aktiv", []);
     const k = await jsonLesen("lern:kennzahlen", null);
-    return "Lernexport für die Wissensbasis\n――――――――――――\n" +
+    return "Lernexport für die Wissensbasis\n────────\n" +
       (aktiv.length ? aktiv.map(a => "- " + a.regel + "  [" + a.art + ", " + a.d + "]").join("\n") : "(keine aktiven Regeln)") +
       (k ? "\n\nLetzte Kennzahlen (" + k.d + "): " + JSON.stringify(k) : "");
   }

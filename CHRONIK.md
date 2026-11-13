@@ -3,6 +3,7 @@
 Neueste oben. Wird ab jetzt von scripts/version.mjs gepflegt.
 Die Nummer zählt nur hoch, nie zurück.
 
+- **17** · 13.11.2026 · Nach Dirks Video: jede neue Anfrage sofort an Dirk (Name aus WhatsApp-Profil, Nummer, Anliegen, Fotos mit Nr.), Meldung „kalkulierbar", Befehle „Anfrage N" (samt Fotos), „Fotos N", „Alle Details" auch in freier Formulierung, Chef-Alex liest echte Akten statt alter Terminliste, Briefing mit Name/Nummer/Anliegen, offene Anfragen bleiben bis 90 Tage, kürzere Trennlinien, Datenschutz ergänzt
 - **16** · 29.10.2026 · Leere KI-Antwort: zweiter Versuch vor dem Notsatz, Ersatztext passend zur Lage (Termin, Kostenvoranschlag, Dirk geduzt), Zeitlimit für die KI auf WhatsApp, verständliche Fehlermail mit Handlungsbedarf
 - **15** · 22.10.2026 · Neue Bilder: Lackierkabine (Abschnitt „Erfahrung") und Hof-Einfahrt, neue Dateinamen wegen Browser-Cache
 - **14** · 22.10.2026 · Zustellung an Dirk dreistufig (frei, Meta-Vorlage mit „Alles anzeigen", E-Mail), falscher Tagesgruß „nichts Offenes" entfernt, Fehlerliste unter „Status", Wochenbericht korrigiert, Testreihe tests/alex-test.mjs im Projekt

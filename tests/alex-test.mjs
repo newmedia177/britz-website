@@ -14,7 +14,7 @@ process.env.RESEND_API_KEY = "r";
 process.env.TEST_LEERLAUF_MS = "1500";
 
 const DIRK = "491700000001", KUNDE = "4917612345678";
-let sp = {}, gesendet = [], fensterOffen = true, kiAntwort = "Gern.", kiStrom = null, kiFolge = [];
+let kiSystem = "", sp = {}, gesendet = [], fensterOffen = true, kiAntwort = "Gern.", kiStrom = null, kiFolge = [];
 const enc = new TextEncoder();
 
 global.fetch = async (u, o = {}) => {
@@ -38,13 +38,14 @@ global.fetch = async (u, o = {}) => {
         if (i < teile.length) c.enqueue(enc.encode("data: " + JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: teile[i++] } }) + "\n\n"));
         else c.close(); } }) };
     }
+    kiSystem = JSON.stringify(body.system || "");
     const t = kiFolge.length ? kiFolge.shift() : kiAntwort;
     return { ok: true, json: async () => ({ content: t === "" ? [] : [{ type: "text", text: t }], stop_reason: "end_turn" }) };
   }
   if (u.includes("/messages")) {
     const b = JSON.parse(o.body);
     if (b.to === DIRK && b.type !== "template" && !fensterOffen) return { ok: false, status: 400, text: async () => "131047" };
-    gesendet.push({ an: b.to === DIRK ? "dirk" : "kunde", typ: b.type, text: b.text?.body || (b.template ? "[Vorlage " + b.template.name + "]" : "[Bild]") });
+    gesendet.push({ an: b.to === DIRK ? "dirk" : "kunde", typ: b.type, text: b.text?.body || (b.template ? "[Vorlage " + b.template.name + "]" : "[Bild " + (b.image?.caption || "") + "]") });
     return { ok: true, json: async () => ({}), text: async () => "" };
   }
   return { ok: false, text: async () => "" };
@@ -69,7 +70,7 @@ const sichtbar = r => T.markerRaus(r.out.filter(s => s.startsWith("data: ") && !
 let mid = 0;
 const waNachricht = (von, text, typ = "text") => wa({ method: "POST", query: {}, headers: {}, body: { entry: [{ changes: [{ value: {
   contacts: [{ profile: { name: "Test" } }],
-  messages: [{ id: "m" + (++mid), from: von, timestamp: "1", ...(typ === "button" ? { type: "button", button: { text } } : { type: "text", text: { body: text } }) }] } }] }] } }, res());
+  messages: [{ id: "m" + (++mid), from: von, timestamp: "1", ...(typ === "button" ? { type: "button", button: { text } } : typ === "bild" ? { type: "image", image: { id: "foto" + mid, caption: text } } : { type: "text", text: { body: text } }) }] } }] }] } }, res());
 const buche = (s, d, f, art = "begutachtung", ort = "") => B.buchungVerarbeiten({ antwort: "Steht. [[KONTAKT|Kunde " + s + "|0176 1" + s + "]]\n[[BUCHUNG|" + d + "|" + f + "|" + art + (ort ? "|" + ort : "") + "]]", kanal: "web", sitzung: "s" + s, thema: "Delle" });
 
 // ---- 1. Web-Chat: nie eine leere Blase -------------------------------
@@ -162,6 +163,37 @@ reset(); uhr("2026-10-22T09:00:00Z");
 kiFolge = ["", ""];
 await waNachricht(DIRK, "Wie sieht es aus?");
 pruefe("Dirk wird geduzt, nicht gesiezt", gesendet.some(g => g.an === "dirk" && /Schreib es mir/.test(g.text)) && !gesendet.some(g => g.an === "dirk" && /Können Sie/.test(g.text)));
+
+// ---- 7. Anfragen fuer Dirk (Video vom 12.11.) -------------------------
+log("\n7. Anfragen für Dirk");
+reset(); uhr("2026-11-13T09:00:00Z");
+kiAntwort = "Danke für das Foto. Welches Fahrzeug ist es?";
+await waNachricht(KUNDE, "Kratzer an der Stoßstange", "bild");
+const neu = gesendet.find(g => g.an === "dirk" && /Neue Anfrage/.test(g.text));
+pruefe("neue Anfrage sofort bei Dirk", !!neu);
+pruefe("mit Name aus dem WhatsApp-Profil und Nummer", neu && /Test/.test(neu.text) && /\+49 176 12345678/.test(neu.text));
+pruefe("Foto geht mit Nummer in der Unterschrift an Dirk", gesendet.some(g => g.an === "dirk" && g.typ === "image" && /Nr\. 1/.test(g.text)));
+gesendet = []; kiAntwort = "Danke, dann kalkulieren wir das. [[KVA|Selbstzahler|VW Golf 2018|1 Bild]]";
+await waNachricht(KUNDE, "VW Golf 2018, zahle selbst");
+pruefe("kalkulierbar-Meldung folgt", gesendet.some(g => g.an === "dirk" && /kalkulierbar/.test(g.text) && /VW Golf/.test(g.text)));
+gesendet = []; await waNachricht(DIRK, "Anfragen");
+pruefe("Liste zeigt Nummer statt nur 'WhatsApp'", gesendet.some(g => g.an === "dirk" && /\+49 176 12345678/.test(g.text)));
+gesendet = []; await waNachricht(DIRK, "Anfrage 1");
+pruefe("Anfrage 1 schickt Details und Foto", gesendet.some(g => g.an === "dirk" && /Schadensart: Selbstzahler/.test(g.text)) && gesendet.some(g => g.an === "dirk" && g.typ === "image"));
+gesendet = []; await waNachricht(DIRK, "Schick mir sämtliche Fotos und detaillierte Anfragen");
+pruefe("freie Bitte um alles wird verstanden", gesendet.some(g => g.an === "dirk" && /Alle offenen Anfragen im Detail/.test(g.text)) && gesendet.some(g => g.typ === "image"));
+gesendet = []; kiAntwort = "Es liegt eine Anfrage vor.";
+await waNachricht(DIRK, "Wie sieht es aus mit den Anfragen von gestern?");
+pruefe("Chef-Alex bekommt echte Akten, nicht die alte Terminliste", /OFFENE ANFRAGEN \(1\)/.test(kiSystem) && /Nr\. 1: Test/.test(kiSystem) && !/keine offenen Terminanfragen/.test(kiSystem));
+// Alte Anfrage (20 Tage) bleibt erhalten, erledigte nach 30 Tagen weg
+reset(); uhr("2026-11-13T09:00:00Z");
+sp["anfragen"] = JSON.stringify([
+  { nr: 2, sitzung: "a", kanal: "whatsapp", kundeNr: "4915112345678", name: "", status: "neu", ts: Date.now() - 40 * 86400000, verlauf: [], fotos: 2, fahrzeug: "WVWZZZ1KZ" },
+  { nr: 3, sitzung: "b", kanal: "web", status: "erledigt", ts: Date.now() - 40 * 86400000, verlauf: [] }]);
+const off = await A.offeneAnfragen();
+pruefe("offene Anfrage nach 40 Tagen noch da, erledigte weg", off.length === 1 && off[0].nr === 2 && JSON.parse(sp["anfragen"]).length === 1);
+pruefe("alte Fotos: ehrlicher Hinweis", /nicht gemerkt/.test(await A.anfrageBefehl("Fotos 2", DIRK)));
+pruefe("'Merk dir: alle Fotos …' bleibt Lernbefehl", !A.willAlleDetails("Merk dir: alle Fotos bitte vorher prüfen"));
 
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));

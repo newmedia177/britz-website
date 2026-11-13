@@ -10,10 +10,11 @@
 // das offen und gibt Dirk den fertigen Text zum Selbstschicken.
 
 import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail, zustellenAnInhaber, fehlerLog,
-         istRuhezeit, fetchMitZeit, rufnummerPruefen, RE_KONTAKT, RE_KVA,
+         istRuhezeit, fetchMitZeit, rufnummerPruefen, sendWABild, RE_KONTAKT, RE_KVA,
          RE_TERMIN } from "./_termin.mjs";
 
 const TAGE_AUFBEWAHRUNG = 30;      // erledigte Anfragen laenger nicht halten
+const TAGE_OFFEN_MAX = 90;         // offene Anfragen spaetestens dann weg
 const NACHFASS_TAGE = 3;           // Angebot raus, so lange still -> nachfassen?
 const ANGEBOT_MAHNUNG_TAGE = 2;    // Anfrage wartet so lange auf Dirks Angebot
 
@@ -32,22 +33,89 @@ export function berlinJetzt() {
   };
 }
 
+
+// ---- Darstellung fuer Dirk -----------------------------------------
+// WhatsApp-Nummer "4917612345678" -> "+49 176 12345678" (antippbar)
+export function nummerLesbar(n) {
+  const z = String(n || "").replace(/\D/g, "");
+  if (!z) return "";
+  return z.startsWith("49") ? "+49 " + z.slice(2, 5) + " " + z.slice(5) : "+" + z;
+}
+function erreichbar(a) {
+  return a.tel || nummerLesbar(a.kundeNr) || "";
+}
+function anliegenKurz(a) {
+  return [a.schaden, a.fahrzeug, a.thema].filter(Boolean).join(" · ").replace(/\s+/g, " ").slice(0, 160) || "kein Anliegen notiert";
+}
+function alterText(ts) {
+  const t = Math.round((Date.now() - ts) / 86400000);
+  return t === 0 ? "heute" : t === 1 ? "seit gestern" : "seit " + t + " Tagen";
+}
+const STATUS_TEXT = { neu: "wartet auf dein Angebot", angebot: "Angebot ist raus", termin: "Termin gebucht", erledigt: "erledigt", gespraech: "nur Gespräch" };
+
+export function anfrageDetail(a) {
+  const z = [];
+  z.push("📋 Anfrage Nr. " + a.nr + (a.kanal === "web" ? " (Website)" : " (WhatsApp)"));
+  z.push("────────");
+  z.push("Kunde: " + (a.name || "Name nicht genannt"));
+  z.push("Erreichbar: " + (erreichbar(a) || "keine Nummer, kam über die Website"));
+  if (a.schaden) z.push("Schadensart: " + a.schaden);
+  if (a.fahrzeug) z.push("Fahrzeug: " + a.fahrzeug);
+  if (a.thema) z.push("Anliegen: " + a.thema);
+  if (a.notizen && a.notizen.length) z.push("Kunde schrieb:\n" + a.notizen.map(n => "„" + n + "“").join("\n"));
+  z.push("Fotos: " + (a.fotos || 0) + ((a.medien || []).length ? " (abrufbar mit \"Fotos " + a.nr + "\")" : a.fotos ? " (vor dem 13.11. eingegangen, nicht mehr abrufbar)" : ""));
+  z.push("Status: " + (STATUS_TEXT[a.status] || a.status) + ", " + alterText(a.ts));
+  if (a.termin) z.push("Termin: " + a.termin);
+  if (a.angebot) z.push("Angebot: " + a.angebot);
+  if (a.verlauf && a.verlauf.length) z.push("Verlauf: " + a.verlauf.slice(-4).join(" · "));
+  z.push("");
+  z.push(a.status === "neu"
+    ? "Weiter: \"Angebot " + a.nr + ": 480 Euro, …\" · \"Übernehme " + a.nr + "\" · \"Erledigt " + a.nr + "\""
+    : "Weiter: \"Übernehme " + a.nr + "\" · \"Erledigt " + a.nr + "\"");
+  return z.join("\n");
+}
+
+// Meldung an Dirk: tagsueber sofort, nachts in die Morgen-Sammlung.
+async function anDirk(text, kurz, bilder) {
+  if (istRuhezeit()) {
+    const l = await jsonLesen("wartend", []);
+    l.push({ text, bilder: bilder || [], ts: Date.now() });
+    await jsonSchreiben("wartend", l.slice(-30));
+    return true;
+  }
+  return zustellenAnInhaber(text, { kurz, bilder: bilder || [] });
+}
+
+// Fotos einer Akte an eine Nummer schicken. Rueckgabe: Anzahl.
+async function fotosSenden(an, a) {
+  let n = 0;
+  for (const id of (a.medien || [])) {
+    if (await sendWABild(an, id, "Nr. " + a.nr + " · " + (a.name || "Kunde") + (a.medien.length > 1 ? " (" + (n + 1) + "/" + a.medien.length + ")" : ""))) n++;
+  }
+  return n;
+}
+
 // ---- Akte anlegen / fortschreiben ----------------------------------
 async function alleLaden() {
   const liste = await jsonLesen("anfragen", []);
-  const grenze = Date.now() - TAGE_AUFBEWAHRUNG * 86400000;
-  const frisch = liste.filter(a => a.ts > grenze);
+  // Erledigte und reine Gespraeche nach 30 Tagen weg. Offene Anfragen
+  // bleiben bis 90 Tage, sonst verschwinden genau die, die liegen.
+  const jetzt = Date.now();
+  const frisch = liste.filter(a => ["erledigt", "gespraech"].includes(a.status)
+    ? (a.letzterKontakt || a.ts) > jetzt - TAGE_AUFBEWAHRUNG * 86400000
+    : a.ts > jetzt - TAGE_OFFEN_MAX * 86400000);
   if (frisch.length !== liste.length) await jsonSchreiben("anfragen", frisch);
   return frisch;
 }
 
 // Wird nach jeder Kundenantwort aufgerufen. Legt bei Bedarf eine Akte an
 // und traegt nach, was neu bekannt wurde. Rueckgabe: Akte oder null.
-export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, kundentext, fotos }) {
+export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, kundentext, fotos, profilName, mediaIds }) {
   if (!sitzung) return null;
   const a = String(antwort || "");
   const mK = a.match(RE_KONTAKT), mV = a.match(RE_KVA), mT = a.match(RE_TERMIN);
-  const relevant = mK || mV || mT || (fotos > 0);
+  const mB = /\[\[BUCHUNG\|/.test(a);
+  const relevant = mK || mV || mT || mB || (fotos > 0);
   const liste = await alleLaden();
   let akte = liste.find(x => x.sitzung === sitzung);
   if (!akte && !relevant) return null;          // Smalltalk bekommt keine Akte
@@ -59,17 +127,67 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
              status: "neu", ts: Date.now(), verlauf: [] };
     liste.push(akte);
   }
-  if (akte.status === "gespraech") akte.status = "neu";
+  const warLead = akte.status !== "gespraech" && akte.gemeldetNeu;
+  if (akte.status === "gespraech" && relevant) akte.status = "neu";
   if (mK) { akte.name = (mK[1] || "").trim().slice(0, 60) || akte.name;
             akte.tel  = (mK[2] || "").trim().slice(0, 40) || akte.tel; }
+  // WhatsApp liefert den Profilnamen mit: besser als "Name unbekannt"
+  if (!akte.name && profilName) akte.name = String(profilName).trim().slice(0, 60);
   if (mV) { akte.schaden  = (mV[1] || "").trim().slice(0, 60) || akte.schaden;
             akte.fahrzeug = (mV[2] || "").trim().slice(0, 120) || akte.fahrzeug; }
   if (mT) { akte.status = akte.status === "erledigt" ? "erledigt" : "termin";
             akte.termin = (mT[1] || "").trim(); }
-  if (!akte.thema && kundentext) akte.thema = String(kundentext).slice(0, 140);
+  // Was der Kunde selbst geschrieben hat (ohne Platzhalter wie "(Foto vom
+  // Schaden)"), damit Dirk die Anfrage versteht, ohne nachzufragen.
+  const echt = String(kundentext || "").trim();
+  if (echt && !/^\(.*\)$/.test(echt) && echt.length > 3) {
+    if (!akte.thema) akte.thema = echt.slice(0, 140);
+    akte.notizen = [...(akte.notizen || []), echt.slice(0, 300)].slice(-6);
+  }
   akte.fotos += fotos || 0;
+  // Foto-Kennungen bei WhatsApp, damit Dirk die Bilder spaeter abrufen kann
+  // ("Fotos N"). Gespeichert wird nur die Kennung, nicht das Bild.
+  if (Array.isArray(mediaIds) && mediaIds.length) akte.medien = [...(akte.medien || []), ...mediaIds].slice(-12);
   akte.letzterKontakt = Date.now();
+
+  // ---- Dirk informieren ------------------------------------------
+  // 1) Neue Anfrage: sofort, mit allem Bekannten. Bei einer Buchung meldet
+  //    die Buchung selbst, dann hier nichts doppelt.
+  const meldungen = [];
+  if (akte.status === "neu" && !akte.gemeldetNeu && !mB && !mT) {
+    akte.gemeldetNeu = true;
+    meldungen.push({
+      text: "🆕 Neue Anfrage\n" + anfrageDetail(akte) +
+            (akte.medien && akte.medien.length ? "\n\nDie Fotos kommen direkt hinterher." : ""),
+      kurz: "Neue Anfrage Nr. " + akte.nr + " · " + (akte.name || "Kunde") + " · " + anliegenKurz(akte).slice(0, 60),
+      bilder: akte.medien || []
+    });
+  } else if (mB || mT) {
+    akte.gemeldetNeu = true;
+  }
+  // 2) Kalkulierbar: Alex hat Schadensart/Fahrzeug eingesammelt.
+  if (mV && !akte.gemeldetKVA && akte.status === "neu") {
+    akte.gemeldetKVA = true;
+    if (warLead || meldungen.length === 0) {
+      meldungen.push({
+        text: "✅ Anfrage Nr. " + akte.nr + " ist jetzt kalkulierbar\n" + anfrageDetail(akte),
+        kurz: "Anfrage Nr. " + akte.nr + " kalkulierbar · " + (akte.name || "Kunde")
+      });
+    }
+  }
+  // 3) Weitere Fotos zu einer schon gemeldeten Anfrage: direkt hinterher,
+  //    mit der Nummer in der Bildunterschrift.
+  const neueMedien = Array.isArray(mediaIds) ? mediaIds : [];
+  if (neueMedien.length && !meldungen.some(m => (m.bilder || []).length) && akte.gemeldetNeu) {
+    meldungen.push({
+      text: "📷 " + neueMedien.length + " neue(s) Foto(s) zu Anfrage Nr. " + akte.nr + " · " + (akte.name || "Kunde") +
+            (erreichbar(akte) ? " · " + erreichbar(akte) : "") + "\n" + anliegenKurz(akte),
+      kurz: "Fotos zu Nr. " + akte.nr + " · " + (akte.name || "Kunde"),
+      bilder: neueMedien
+    });
+  }
   await jsonSchreiben("anfragen", liste.slice(-120));
+  for (const m of meldungen) await anDirk(m.text, m.kurz, m.bilder).catch(() => {});
   return akte;
 }
 
@@ -147,34 +265,85 @@ async function anInhaber(text, kurz, art) {
 }
 
 function zeile(a) {
-  const st = { neu: "wartet auf Angebot", angebot: "Angebot raus", termin: "Termin", erledigt: "erledigt" }[a.status] || a.status;
-  const alter = Math.round((Date.now() - a.ts) / 86400000);
-  return a.nr + ". " + (a.name || "Name unbekannt") +
-    (a.tel ? " · " + a.tel : (a.kundeNr ? " · WhatsApp" : " · keine Nummer")) +
-    "\n   " + (a.schaden ? a.schaden + " · " : "") + (a.fahrzeug || a.thema || "kein Anliegen notiert") +
-    (a.fotos ? " · " + a.fotos + " Foto(s)" : "") +
-    "\n   Status: " + st + " · seit " + (alter === 0 ? "heute" : alter + " Tag(en)") +
-    (a.kanal === "web" ? " · Website" : "");
+  return "Nr. " + a.nr + " · " + (a.name || "Name nicht genannt") + " · " + (erreichbar(a) || "keine Nummer") +
+    "\n   " + anliegenKurz(a) + (a.fotos ? " · " + a.fotos + " Foto(s)" : "") +
+    "\n   " + (STATUS_TEXT[a.status] || a.status) + ", " + alterText(a.ts) + (a.kanal === "web" ? " · Website" : "");
 }
 
 // ---- Befehle vom Inhaber -----------------------------------------
-export async function anfrageBefehl(t) {
+export async function offeneAnfragen() {
+  return (await alleLaden()).filter(a => !["erledigt", "gespraech"].includes(a.status));
+}
+
+// Lange Texte in WhatsApp-taugliche Stuecke teilen (an Absaetzen)
+function stuecke(text, max = 3500) {
+  const teile = []; let akt = "";
+  for (const absatz of String(text).split("\n\n")) {
+    if (akt && (akt + "\n\n" + absatz).length > max) { teile.push(akt); akt = absatz; }
+    else akt = akt ? akt + "\n\n" + absatz : absatz;
+  }
+  if (akt) teile.push(akt);
+  return teile;
+}
+
+// Dirk fragt frei nach allem ("Schick mir saemtliche Fotos und
+// detaillierte Anfragen"). Erkennen ohne KI, damit es sicher klappt.
+export function willAlleDetails(s) {
+  const t = String(s || "").toLowerCase();
+  if (/^(merk|lern|notiz|vergiss|angebot|erledigt|l(ö|oe)sch)/.test(t.trim()) || t.length > 200) return false;
+  const menge = /(alle|sämtliche|saemtliche|samtliche|jede|komplett|gesamt|ganzen?)/.test(t);
+  const was = /(anfrage|foto|bild|detail)/.test(t);
+  return (menge && was) || /^(details|alle details|alles im detail)$/.test(t.trim());
+}
+
+export async function anfrageBefehl(t, an) {
   const s = String(t || "").trim();
   let m;
 
-  if (/^anfragen$/i.test(s)) {
-    const offen = (await alleLaden()).filter(a => !["erledigt", "gespraech"].includes(a.status));
+  if (/^(offene\s+)?anfragen\??$/i.test(s)) {
+    const offen = await offeneAnfragen();
     return offen.length
-      ? "Offene Anfragen (" + offen.length + ")\n――――――――――――\n" + offen.map(zeile).join("\n\n") +
-        "\n\nBefehle: \"Angebot 3: 480 Euro, Kotflügel richten und lackieren\" · \"Erledigt 3\" · \"Nachfassen 3\" · \"Anfrage 3\""
+      ? "Offene Anfragen (" + offen.length + ")\n────────\n" + offen.map(zeile).join("\n\n") +
+        "\n\n\"Anfrage 3\" zeigt alles zu Nr. 3 samt Fotos · \"Alle Details\" schickt alle\n" +
+        "\"Angebot 3: 480 Euro, Kotflügel richten und lackieren\" · \"Erledigt 3\""
       : "Keine offenen Anfragen.";
   }
 
-  m = s.match(/^anfrage\s+(\d+)$/i);
+  m = s.match(/^(?:anfrage|nr\.?|details?)\s*(\d+)$/i);
   if (m) {
     const a = (await alleLaden()).find(x => x.nr === Number(m[1]));
-    return a ? zeile(a) + (a.verlauf.length ? "\n\nVerlauf:\n" + a.verlauf.map(v => "· " + v).join("\n") : "")
-             : "Anfrage " + m[1] + " kenne ich nicht.";
+    if (!a) return "Anfrage " + m[1] + " kenne ich nicht. \"Anfragen\" zeigt die offenen.";
+    if (an && (a.medien || []).length) {
+      await sendWA(an, anfrageDetail(a));
+      await fotosSenden(an, a);
+      return "Das waren alle " + a.medien.length + " Foto(s) zu Nr. " + a.nr + ".";
+    }
+    return anfrageDetail(a);
+  }
+
+  m = s.match(/^(?:fotos?|bilder?)\s*(?:von|zu|nr\.?)?\s*(\d+)$/i);
+  if (m) {
+    const a = (await alleLaden()).find(x => x.nr === Number(m[1]));
+    if (!a) return "Anfrage " + m[1] + " kenne ich nicht.";
+    if (!(a.medien || []).length) return a.fotos
+      ? "Zu Nr. " + a.nr + " kamen " + a.fotos + " Foto(s), aber vor dem 13.11. habe ich mir die Bilder noch nicht gemerkt. " +
+        (erreichbar(a) ? "Bitte beim Kunden nachfragen: " + erreichbar(a) : "")
+      : "Zu Nr. " + a.nr + " gibt es keine Fotos.";
+    const n = an ? await fotosSenden(an, a) : 0;
+    return n ? n + " Foto(s) zu Nr. " + a.nr + " geschickt." : "Die Fotos konnte ich gerade nicht schicken. WhatsApp hält sie etwa 30 Tage bereit.";
+  }
+
+  // Alles auf einmal: jede offene Anfrage im Detail, Fotos hinterher
+  if (willAlleDetails(s)) {
+    const offen = await offeneAnfragen();
+    if (!offen.length) return "Es gibt gerade keine offenen Anfragen.";
+    const text = "Alle offenen Anfragen im Detail (" + offen.length + ")\n\n" + offen.map(anfrageDetail).join("\n\n");
+    if (!an) return text;
+    for (const st of stuecke(text)) await sendWA(an, st);
+    let fotos = 0, alteFotos = 0;
+    for (const a of offen) { fotos += await fotosSenden(an, a); if (a.fotos && !(a.medien || []).length) alteFotos++; }
+    return (fotos ? fotos + " Foto(s) sind mitgekommen." : "Fotos konnte ich keine mitschicken.") +
+      (alteFotos ? " Bei " + alteFotos + " älteren Anfrage(n) kamen die Fotos vor dem 13.11., die Bilder habe ich mir damals noch nicht gemerkt." : "");
   }
 
   m = s.match(/^angebot\s+(\d+)\s*[:\-–]\s*([\s\S]{3,})$/i);
@@ -266,7 +435,7 @@ async function protokoll(tag) {
       g.zuege.map(z => (z.wer === "Alex" ? "  Alex: " : "  Kunde: ") + z.text.replace(/\n+/g, " ").slice(0, 220)).join("\n"));
   }
   const akten = (await alleLaden()).filter(a => new Date(a.ts).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }) === tag);
-  const kopf = "Protokoll " + tag.split("-").reverse().join(".") + "\n――――――――――――\n" +
+  const kopf = "Protokoll " + tag.split("-").reverse().join(".") + "\n────────\n" +
     "Gespräche: " + teile.length + " · neue Anfragen: " + akten.length + "\n" +
     (akten.length ? akten.map(a => "· Nr. " + a.nr + " " + (a.name || "ohne Name") + " – " + (a.schaden || a.thema || "").slice(0, 60)).join("\n") + "\n" : "") +
     "(Verläufe anonymisiert: Namen/Nummern durch Platzhalter ersetzt)\n\n";
@@ -351,9 +520,13 @@ export async function weckerAufgaben() {
     const gesternTag = new Date(Date.now() - 86400000).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
     const gesternNeu = liste.filter(a => new Date(a.ts).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }) === gesternTag).length;
 
-    let text = "Guten Morgen Dirk, dein Überblick:\n――――――――――――\n" +
-      "Heute: " + (heute.length ? heute.length + " von 5 – " + heute.map(b => b.von + "–" + b.bis + " " + (b.name || "ohne Name") + " (" + b.art + ")").join(", ") : "keine Termine") + "\n" +
-      "Warten auf dein Angebot: " + wartend.length + (wartend.length ? " (" + wartend.map(a => "Nr. " + a.nr).join(", ") + ")" : "") + "\n" +
+    let text = "Guten Morgen Dirk, dein Überblick:\n────────\n" +
+      "Heute: " + (heute.length ? heute.length + " von 5\n" + heute.map(b => "· " + b.von + "–" + b.bis + " " + (b.name || "ohne Name") + " (" + b.art + ")").join("\n") : "keine Termine") + "\n\n" +
+      "Warten auf dein Angebot: " + wartend.length +
+      (wartend.length ? "\n" + wartend.slice(0, 12).map(a => "· Nr. " + a.nr + " " + (a.name || "Name nicht genannt") +
+        (erreichbar(a) ? " · " + erreichbar(a) : "") + "\n  " + anliegenKurz(a).slice(0, 90) +
+        (a.fotos ? " · " + a.fotos + " Foto(s)" : "") + " · " + alterText(a.ts)).join("\n") +
+        (wartend.length > 12 ? "\n· … und " + (wartend.length - 12) + " weitere" : "") : "") + "\n\n" +
       "Angebote raus, noch offen: " + angebote.length + "\n" +
       "Gestern neu: " + gesternNeu + " Anfrage(n)";
     // Terminerinnerung fuer morgen
@@ -371,7 +544,7 @@ export async function weckerAufgaben() {
     // Nachfass-Vorschlag
     const still = angebote.filter(a => a.angebotTs && Date.now() - a.angebotTs > NACHFASS_TAGE * 86400000 && !a.nachgefasst);
     if (still.length) text += "\n\nStill seit " + NACHFASS_TAGE + " Tagen nach dem Angebot: " + still.map(a => "Nr. " + a.nr).join(", ") + ". Soll ich nachfassen? → \"Nachfassen " + still[0].nr + "\"";
-    text += "\n\n\"Anfragen\" zeigt alles im Detail.";
+    text += "\n\n\"Anfrage 3\" zeigt alles zu Nr. 3 samt Fotos, \"Alle Details\" schickt alles auf einmal.";
     const kurzB = (heute.length ? heute.length + " Termin(e) heute" : "Heute keine Termine") +
       (wartend.length ? ", " + wartend.length + " Anfrage(n) warten auf dein Angebot" : "");
     await anInhaber(text, kurzB, "tagesstart");
@@ -392,7 +565,7 @@ export async function weckerAufgaben() {
     const aktiv = await jsonLesen("lern:aktiv", []);
     const offenVorschlaege = await jsonLesen("lern:vorschlaege", []);
     const fehler = await fehlerSumme(7);
-    const text = "Wochenbericht\n――――――――――――\n" +
+    const text = "Wochenbericht\n────────\n" +
       "Neue Anfragen: " + neu.length + " (Website " + neu.filter(a => a.kanal === "web").length + ", WhatsApp " + neu.filter(a => a.kanal === "whatsapp").length + ")\n" +
       "Angebote verschickt: " + ang.length + "\n" +
       "Abgeschlossen: " + erl.length + "\n" +
@@ -446,4 +619,25 @@ export async function uebergabeAnWhatsApp(akte) {
     if (a) { a.uebergeben = true; a.kundeNr = nr; a.verlauf.push(new Date().toLocaleDateString("de-DE") + " auf WhatsApp übergeben"); await jsonSchreiben("anfragen", liste); }
   }
   return { ok, grund: ok ? "" : "Vorlage abgelehnt" };
+}
+
+
+// ---- Echter Stand fuer Alex, wenn Dirk schreibt ---------------------
+// Ersetzt die alte Terminliste. Alex darf nur hieraus antworten.
+export async function chefUeberblick() {
+  const offen = await offeneAnfragen();
+  const buch = (await jsonLesen("buchungen", [])).filter(b => b.status === "aktiv")
+    .sort((a, b) => (a.datum + String(a.von).padStart(2, "0")).localeCompare(b.datum + String(b.von).padStart(2, "0")));
+  const z = [];
+  z.push("OFFENE ANFRAGEN (" + offen.length + "), Stand jetzt aus dem System:");
+  if (!offen.length) z.push("keine");
+  for (const a of offen) z.push("- Nr. " + a.nr + ": " + (a.name || "Name nicht genannt") + ", " + (erreichbar(a) || "keine Nummer") +
+    ", " + anliegenKurz(a) + ", Fotos: " + (a.fotos || 0) + ((a.medien || []).length ? " (abrufbar)" : a.fotos ? " (nicht mehr abrufbar)" : "") +
+    ", " + (STATUS_TEXT[a.status] || a.status) + ", " + alterText(a.ts) + ", " + (a.kanal === "web" ? "Website" : "WhatsApp"));
+  z.push("");
+  z.push("GEBUCHTE TERMINE (" + buch.length + "):");
+  if (!buch.length) z.push("keine");
+  for (const b of buch.slice(0, 15)) z.push("- " + b.datum.split("-").reverse().join(".") + " " + b.von + "–" + b.bis + ": " +
+    (b.name || "ohne Name") + " (" + b.art + ")" + (b.akteNr ? ", Anfrage Nr. " + b.akteNr : ""));
+  return z.join("\n");
 }

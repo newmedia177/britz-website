@@ -308,7 +308,7 @@ export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder =
 
     // Stufe 3: E-Mail
     const ok = await sendMail("Alex: " + titel.slice(0, 80), String(text) +
-      "\n\n――――――――――――\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
+      "\n\n────────\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
       "nicht zustellen konnte. Sobald du Alex kurz schreibst, kommt alles " +
       "Liegengebliebene auch dort an.");
     if (ok) irgendwo = true;
@@ -494,10 +494,10 @@ export async function warteschlangeZustellen() {
   if (!nummern.length) return false;
 
   const kopf = liste.length === 1
-    ? "🌙 Kam heute Nacht rein:\n――――――――――――\n"
+    ? "🌙 Kam heute Nacht rein:\n────────\n"
     : "🌙 Kam heute Nacht rein (" + liste.length + " Meldungen):\n" +
-      "――――――――――――\n";
-  const text = kopf + liste.map(e => e.text).join("\n\n――――――――――――\n");
+      "────────\n";
+  const text = kopf + liste.map(e => e.text).join("\n\n────────\n");
 
   const bilder = liste.flatMap(e => e.bilder || []);
   const ok = await zustellenAnInhaber(text, {
@@ -581,7 +581,7 @@ export async function offeneGespraecheMelden() {
 
   const text =
     "Angefangen, nicht zu Ende geführt (" + reif.length + ")\n" +
-    "――――――――――――\n" + zeilen.join("\n\n") +
+    "────────\n" + zeilen.join("\n\n") +
     "\n\nDiese Leute haben angefragt und sich dann nicht mehr gemeldet." +
     "\nMit Nummer: kurz zurückrufen lohnt sich meist." +
     "\nOhne Nummer über den Website-Chat: leider kein Rückweg – dort ist die Anfrage verloren.";
@@ -658,7 +658,7 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
     await jsonSchreiben("termine", liste.slice(-MAX_OFFEN));
     const text =
       "Änderung zur Terminanfrage Nr. " + vorhanden.nr + "\n" +
-      "――――――――――――\n" +
+      "────────\n" +
       "Kunde: " + vorhanden.name + "\n" +
       (vorhanden.tel ? "Telefon: " + vorhanden.tel + "\n" : "") +
       "Bisher: " + datumLesbar(alteZeit) + "\n" +
@@ -687,7 +687,7 @@ export async function meldeTermin({ antwort, kanal, kundeNr, thema, ersatzName }
 
   const kopf =
     "Neue Terminanfrage Nr. " + nr + "\n" +
-    "――――――――――――\n" +
+    "────────\n" +
     "Kunde: " + eintrag.name + "\n" +
     (tel ? "Telefon: " + tel +
        (rufnummerPruefen(tel).hinweis ? " (" + rufnummerPruefen(tel).hinweis + ")" : "") +

@@ -14,7 +14,7 @@
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, lernrunde, gelerntBlock, lernBefehl } from "./_lernen.mjs";
-import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben } from "./_anfragen.mjs";
+import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben, chefUeberblick } from "./_anfragen.mjs";
 import { buchungBefehl, buchungVerarbeiten, buchungKontext, RE_BUCHUNG } from "./_buchung.mjs";
 import { spiegeln, kundeInUebernahme, uebernahmeKunde, uebernahmeBefehl, anUebernehmer } from "./_mitlesen.mjs";
 import { akteHolenOderAnlegen } from "./_anfragen.mjs";
@@ -194,55 +194,33 @@ async function verarbeite(req) {
   const chef = isOwner(from);
   let chefBlock = "";
   if (chef) {
-    const offen = await jsonLesen("termine", []);
-    const frisch = offen.filter(e => Date.now() - (e.ts || 0) < 7 * 86400000);
+    // Echter Stand aus den Anfragen-Akten und Buchungen. Frueher stand hier
+    // die alte Terminliste, deshalb sagte Alex "nichts Offenes", obwohl
+    // neun Anfragen warteten.
+    const stand = await chefUeberblick().catch(() => "STAND NICHT LESBAR: sag Dirk, er soll \"Anfragen\" schreiben.");
     chefBlock =
-      "\n\n=== DU SPRICHST MIT DEM INHABER ===\n" +
-      "Das ist nicht ein Kunde, sondern der Chef der Werkstatt. Du bist " +
-      "sein Assistent. Sprich ihn mit Sie an, sei knapp und sachlich, " +
-      "keine Verkaufsfloskeln, keine Begrüßungsformeln in jeder Nachricht.\n" +
-      "Er hat eben schon eine kurze Tagesübersicht von mir bekommen, " +
-      "falls heute etwas offen war. Wiederhole sie nicht von selbst " +
-      "und begrüße ihn nicht noch einmal.\n" +
-      "Er kann dich nach dem Stand fragen, Termine ändern, dir Wissen " +
-      "beibringen oder Rückmeldungen an Kunden geben.\n\n" +
-      "Das kannst du für ihn tun:\n" +
-      "• Offene Terminanfragen zeigen (er sagt \"Termine\")\n" +
-      "• Eine Rückmeldung an einen WhatsApp-Kunden weiterleiten " +
-      "(\"Termin 3 passt\" oder \"Termin 3 lieber Donnerstag 10 Uhr\")\n" +
-      "• Verschieben in Kurzform: \"Termin auf 14 Uhr\" (gleicher Tag) " +
-      "oder \"Termin auf 19.08. 14 Uhr\"\n" +
-      "• Wissen lernen (\"Merk dir: …\"), Notizen zeigen, Lücken zeigen\n" +
-      "• Eine erledigte Anfrage löschen (\"Lösche Termin 3\", bei nur einer " +
-      "offenen reicht \"Termin löschen\") oder alle (\"Lösche alle Termine\")\n\n" +
-      "ANREDE: Mit dem Chef und mit Julian duzt du dich – locker und " +
-      "kollegial, kein \"Sie\". Gegenüber KUNDEN bleibt es immer beim Sie.\n" +
-      "Denk mit: Weise von dir aus auf Dinge hin, die untergehen könnten " +
-      "(Anfrage älter als 24 Stunden, zwei Termine kurz hintereinander, " +
-      "Website-Kunde, der einen Anruf braucht). Kurz und sachlich, " +
-      "ohne Floskeln.\n\n" +
-      "Wichtig zur Erreichbarkeit der Kunden:\n" +
-      "• Kam die Anfrage über WhatsApp, kannst du dem Kunden direkt " +
-      "antworten. Biete das aktiv an.\n" +
-      "• Kam sie über den Website-Chat, kannst du dort NICHT antworten. " +
-      "Sag das klar und nenne die Rufnummer zum Anrufen.\n" +
-      "• Ist eine WhatsApp-Anfrage älter als 24 Stunden, lässt WhatsApp " +
-      "kein Anschreiben mehr zu. Auch dann: Rufnummer nennen.\n\n" +
-      (frisch.length
-        ? "Aktuell offene Terminanfragen:\n" + frisch.map(e =>
-            "Nr. " + e.nr + ": " + e.name +
-            ", " + datumLesbar(e.wann) +
-            " (" + (e.kanal === "whatsapp" ? "WhatsApp, erreichbar" : "Website, bitte anrufen") + ")" +
-            (e.tel ? ", " + e.tel : "")
-          ).join("\n")
-        : "Aktuell keine offenen Terminanfragen.") +
-      "\n\nWenn er etwas will, das du nicht selbst erledigen kannst, sag " +
-      "kurz warum und was er stattdessen tun kann. Rate nie.\n" +
-      "Erfinde niemals Funktionen. Kannst du etwas nicht, sage das klar " +
-      "und nenne den passenden Befehl aus der Liste oben, falls es einen gibt. " +
-      "Will er eine Anfrage loswerden, nenne ihm den Befehl \"Lösche Termin N\". " +
-      "Setze im Gespräch mit dem Inhaber NIEMALS die Termin-Marker. " +
-      "Die gelten nur für Kundengespräche.";
+      "\n\n=== DU SPRICHST MIT DIRK, DEM INHABER ===\n" +
+      "Das ist kein Kunde, sondern der Chef. Du bist sein Assistent, ihr duzt euch. " +
+      "Knapp, sachlich, kollegial, keine Verkaufsfloskeln, keine Begrüßung in jeder Nachricht. " +
+      "Gegenüber KUNDEN bleibt es immer beim Sie.\n\n" +
+      stand + "\n\n" +
+      "REGELN FÜR DEINE ANTWORT:\n" +
+      "• Antworte zum Stand NUR aus der Liste oben. Steht dort eine Anfrage, existiert sie. " +
+      "Sag nie \"nichts Offenes\", wenn oben Anfragen stehen, und erfinde keine.\n" +
+      "• Sag nie, dass Julian etwas prüfen muss oder dass du etwas nicht siehst, wenn es oben steht.\n" +
+      "• Fragt er nach Details, Fotos oder Nummern, nenne ihm den Befehl, der sie sofort schickt: " +
+      "\"Anfrage 3\" (alles zu Nr. 3 samt Fotos), \"Fotos 3\", \"Alle Details\" (alle offenen samt Fotos). " +
+      "Die Nummern der Kunden stehen oben, die darfst du ihm direkt nennen.\n" +
+      "• Fotos, die vor dem 13.11. kamen, sind nicht mehr abrufbar. Dann ehrlich sagen und die Nummer zum Nachfragen nennen.\n\n" +
+      "BEFEHLE, DIE ES WIRKLICH GIBT:\n" +
+      "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Alle Details\" · \"Angebot 3: 480 Euro, …\" · " +
+      "\"Erledigt 3\" · \"Nachfassen 3\" · \"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · " +
+      "\"Fertig 3\" (Auto fertig) · \"Merk dir: …\" · \"Protokoll\" · \"Status\" · \"Hilfe\".\n" +
+      "Erfinde keine weiteren Befehle oder Funktionen. Kannst du etwas nicht, sag es klar und nenne den passenden Befehl.\n" +
+      "Website-Kunden kannst du nicht anschreiben, dann die Rufnummer nennen. WhatsApp-Kunden, die über 24 Stunden " +
+      "nicht geschrieben haben, auch nicht: Rufnummer nennen.\n" +
+      "Denk mit: Weise auf Anfragen hin, die schon lange warten. Kurz.\n" +
+      "Setze im Gespräch mit Dirk NIEMALS Marker wie [[KONTAKT|…]] oder [[BUCHUNG|…]]. Die gelten nur für Kunden.";
   }
 
   // ---- Alex antworten lassen ------------------------------------
@@ -348,18 +326,8 @@ async function verarbeite(req) {
   if (!chef) {
     await meldeTermin({ antwort: reply, kanal: "whatsapp", kundeNr: from,
                         thema: text, ersatzName: profilName });
-    // Schadensfotos und Fahrzeugschein an den Inhaber weiterleiten -
-    // ohne sie zu speichern. Nur die Kennung wird weitergereicht.
-    if (mediaIds.length) {
-      await leiteBilderWeiter({
-        kanal: "whatsapp",
-        mediaIds,
-        name: profilName,
-        tel: "+" + String(from),
-        hinweis: [kvaNotiz(reply), text.slice(0, 200)]
-                   .filter(Boolean).join("\n")
-      });
-    }
+    // Fotos gehen jetzt zusammen mit der Anfrage-Meldung an Dirk
+    // (anfrageFortschreiben), mit Nummer und Name in der Unterschrift.
   }
 
   // Bestaetigter Termin: Auf WhatsApp gibt es keine Karte mit Knoepfen.
@@ -458,8 +426,9 @@ async function verarbeite(req) {
     // und dann nicht mehr geantwortet hat.
     await anfrageFortschreiben({
       sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from,
-      antwort: rohAntwort, kundentext: text, fotos: mediaIds.length
-    }).catch(() => {});
+      antwort: rohAntwort, kundentext: text, fotos: mediaIds.length,
+      profilName, mediaIds
+    }).catch(e => console.error("akte", e && e.message));
     // Jede WhatsApp-Unterhaltung bekommt eine Nummer, damit Dirk sie mit
     // "Uebernehme N" uebernehmen kann (reine Unterhaltung = Status
     // "gespraech", zaehlt nicht als offene Anfrage).
@@ -633,7 +602,7 @@ async function handleOwnerCommand(from, text) {
 
   // Anfragen-Akten: "Anfragen", "Anfrage 3", "Angebot 3: ...", "Erledigt 3",
   // "Nachfassen 3", "Protokoll", "Protokoll gestern"
-  const akte = await anfrageBefehl(t);
+  const akte = await anfrageBefehl(t, from);
   if (akte) { await sendWhatsApp(from, akte); return true; }
 
   // "Lösche Termin 3", "Termin 3 löschen", "Lösche alle Termine",
@@ -717,7 +686,7 @@ async function handleOwnerCommand(from, text) {
     const u = speicherUrl();
     const tk = speicherToken();
     await sendWhatsApp(from,
-      "Selbsttest\n――――――――――――\n" +
+      "Selbsttest\n────────\n" +
       "Speicher konfiguriert: " + (u ? "ja" : "NEIN") + "\n" +
       "Adresse beginnt mit: " + (u.split("://")[0] || "?") + "://\n" +
       "Adresse endet auf upstash.io: " +
@@ -729,11 +698,11 @@ async function handleOwnerCommand(from, text) {
         (lesen === undefined ? "FEHLER" : String(lesen))) + "\n" +
       "Gespeicherte Gesprächsschritte: " + verlauf.length + "\n" +
       "Notizen: " + notizen.length + "\n\n" +
-      "Zustellung an dich\n――――――――――――\n" +
+      "Zustellung an dich\n────────\n" +
       "Vorlage für Meldungen: " + (process.env.WA_VORLAGE_INHABER ? process.env.WA_VORLAGE_INHABER : "FEHLT (Meldungen kommen nur, wenn du in den letzten 24 Std. geschrieben hast)") + "\n" +
       "Vorlage Tagesstart: " + (process.env.WA_VORLAGE_TAGESSTART || "keine eigene (nutzt die für Meldungen)") + "\n" +
       "E-Mail-Notweg: " + (process.env.RESEND_API_KEY ? "an " + (process.env.NOTFALL_MAIL || "schaden@alb.berlin") : "AUS") + "\n\n" +
-      "Letzte Aussetzer\n――――――――――――\n" +
+      "Letzte Aussetzer\n────────\n" +
       (fehler.length
         ? fehler.slice(-6).reverse().map(f => new Date(f.ts).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }) + " · " + f.art + (f.grund ? " · " + f.grund : "")).join("\n")
         : "keine"));
@@ -777,31 +746,31 @@ async function handleOwnerCommand(from, text) {
   }
   if (/^(hilfe|befehle|was kannst du)$/i.test(t)) {
     await sendWhatsApp(from,
-      "Ihre Befehle:\n" +
-      "• Merk dir: … – neues Wissen, gilt sofort\n" +
-      "• Zeig Notizen – alles Gemerkte\n" +
-      "• Vergiss 2 – Notiz 2 löschen\n" +
-      "• Zeig Lücken – Fragen, die ich nicht beantworten konnte\n" +
-      "• Lücken leeren – Liste zurücksetzen\n" +
-      "• Termine – offene Terminanfragen\n" +
-      "• Termin 3 passt – Rückmeldung zu Anfrage Nr. 3\n" +
-      "• Lösche Termin 3 – Anfrage aus der Liste nehmen\n" +
-      "• Übernehme 7 – du schreibst selbst mit dem Kunden, \"Fertig\" beendet\n" +
+      "Deine Befehle:\n" +
+      "ANFRAGEN\n" +
+      "• Anfragen – alle offenen mit Name und Nummer\n" +
+      "• Anfrage 3 – alles zu Nr. 3 samt Fotos\n" +
+      "• Fotos 3 – nur die Fotos zu Nr. 3\n" +
+      "• Alle Details – alle offenen samt Fotos\n" +
+      "• Angebot 3: 480 Euro, Kotflügel richten – ich schicke es dem Kunden\n" +
+      "• Erledigt 3 / Nachfassen 3 – abschließen oder nachhaken\n" +
+      "• Übernehme 3 – du schreibst selbst mit dem Kunden, \"Fertig\" beendet\n" +
       "• Mitlesen an / aus – Kundengespräche mitlesen\n" +
+      "TERMINE\n" +
       "• Termine / Termine morgen – alle gebuchten Termine\n" +
       "• Voll Donnerstag / Frei Donnerstag – Tag sperren oder öffnen\n" +
       "• Urlaub 1.10. bis 5.10. – Zeitraum sperren\n" +
       "• Absagen 7 / Verschieben 7 Freitag 8-10 – Kunde wird informiert\n" +
       "• Eintragen Donnerstag 11-13 Meier – Telefontermin mitzählen\n" +
       "• Fertig 7 – Auto fertig, Kunde bekommt Abholzeiten\n" +
-      "• Lernen – offene Lernvorschläge aus der Auswertung\n" +
-      "• Lernen 3 ok / Lernen 3 nein – freigeben oder verwerfen\n" +
-      "• Gelernt – aktive gelernte Regeln (Vergiss gelernt 2 entfernt)\n" +
-      "• Lernrunde – Auswertung jetzt anstoßen\n" +
-      "• Anfragen – alle offenen Kundenanfragen mit Status\n" +
-      "• Angebot 3: 480 Euro, Kotflügel richten – ich schicke es dem Kunden\n" +
-      "• Erledigt 3 / Nachfassen 3 – abschließen oder nachhaken\n" +
-      "• Protokoll / Protokoll gestern – Gesprächsprotokoll des Tages");
+      "WISSEN\n" +
+      "• Merk dir: … – neues Wissen, gilt sofort\n" +
+      "• Zeig Notizen / Vergiss 2\n" +
+      "• Zeig Lücken / Lücken leeren\n" +
+      "• Lernen / Lernen 3 ok / Lernen 3 nein / Gelernt / Lernrunde\n" +
+      "SONST\n" +
+      "• Protokoll / Protokoll gestern – Gespräche des Tages\n" +
+      "• Status – läuft alles?");
     return true;
   }
   if ((m = t.match(/^vergiss (nummer |notiz )?(\d+)/i))) {
