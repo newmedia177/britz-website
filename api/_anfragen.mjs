@@ -70,7 +70,10 @@ export function anfrageDetail(a) {
   if (a.verlauf && a.verlauf.length) z.push("Verlauf: " + a.verlauf.slice(-4).join(" · "));
   z.push("");
   z.push(a.status === "neu"
-    ? "Weiter: \"Angebot " + a.nr + ": 480 Euro, …\" · \"Übernehme " + a.nr + "\" · \"Erledigt " + a.nr + "\""
+    ? "Weiter: \"Angebot " + a.nr + ": [Preis], [was gemacht wird]\" · \"Erledigt " + a.nr + "\"" +
+      (a.kanal === "whatsapp" && Date.now() - (a.letzterKontakt || a.ts) > 86400000
+        ? "\nDer Kunde hat seit über 24 Std. nicht geschrieben: am besten selbst anrufen oder schreiben."
+        : " · \"Übernehme " + a.nr + "\"")
     : "Weiter: \"Übernehme " + a.nr + "\" · \"Erledigt " + a.nr + "\"");
   return z.join("\n");
 }
@@ -133,7 +136,7 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
             akte.tel  = (mK[2] || "").trim().slice(0, 40) || akte.tel; }
   // WhatsApp liefert den Profilnamen mit: besser als "Name unbekannt"
   if (!akte.name && profilName) akte.name = String(profilName).trim().slice(0, 60);
-  if (mV) { akte.schaden  = (mV[1] || "").trim().slice(0, 60) || akte.schaden;
+  if (mV) { akte.schaden  = (mV[1] || "").trim().slice(0, 120) || akte.schaden;
             akte.fahrzeug = (mV[2] || "").trim().slice(0, 120) || akte.fahrzeug; }
   if (mT) { akte.status = akte.status === "erledigt" ? "erledigt" : "termin";
             akte.termin = (mT[1] || "").trim(); }
@@ -141,7 +144,7 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
   // Schaden)"), damit Dirk die Anfrage versteht, ohne nachzufragen.
   const echt = String(kundentext || "").trim();
   if (echt && !/^\(.*\)$/.test(echt) && echt.length > 3) {
-    if (!akte.thema) akte.thema = echt.slice(0, 140);
+    if (!akte.thema) akte.thema = echt.slice(0, 300);
     akte.notizen = [...(akte.notizen || []), echt.slice(0, 300)].slice(-6);
   }
   akte.fotos += fotos || 0;
@@ -305,7 +308,7 @@ export async function anfrageBefehl(t, an) {
     return offen.length
       ? "Offene Anfragen (" + offen.length + ")\n────────\n" + offen.map(zeile).join("\n\n") +
         "\n\n\"Anfrage 3\" zeigt alles zu Nr. 3 samt Fotos · \"Alle Details\" schickt alle\n" +
-        "\"Angebot 3: 480 Euro, Kotflügel richten und lackieren\" · \"Erledigt 3\""
+        "\"Angebot 3: [Preis], [was gemacht wird]\" · \"Erledigt 3\""
       : "Keine offenen Anfragen.";
   }
 

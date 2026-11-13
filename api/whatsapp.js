@@ -213,7 +213,7 @@ async function verarbeite(req) {
       "Die Nummern der Kunden stehen oben, die darfst du ihm direkt nennen.\n" +
       "• Fotos, die vor dem 13.11. kamen, sind nicht mehr abrufbar. Dann ehrlich sagen und die Nummer zum Nachfragen nennen.\n\n" +
       "BEFEHLE, DIE ES WIRKLICH GIBT:\n" +
-      "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Alle Details\" · \"Angebot 3: 480 Euro, …\" · " +
+      "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Alle Details\" · \"Angebot 3: [Preis], [was gemacht wird]\" · " +
       "\"Erledigt 3\" · \"Nachfassen 3\" · \"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · " +
       "\"Fertig 3\" (Auto fertig) · \"Merk dir: …\" · \"Protokoll\" · \"Status\" · \"Hilfe\".\n" +
       "Erfinde keine weiteren Befehle oder Funktionen. Kannst du etwas nicht, sag es klar und nenne den passenden Befehl.\n" +
