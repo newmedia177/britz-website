@@ -73,7 +73,7 @@ export function anfrageDetail(a) {
     ? "Weiter: \"Angebot " + a.nr + ": [Preis], [was gemacht wird]\" · \"Erledigt " + a.nr + "\"" +
       (a.kanal === "whatsapp" && Date.now() - (a.letzterKontakt || a.ts) > 86400000
         ? "\nDer Kunde hat seit über 24 Std. nicht geschrieben: am besten selbst anrufen oder schreiben."
-        : " · \"Übernehme " + a.nr + "\"")
+        : " · \"Vorbeikommen " + a.nr + "\" · \"Übernehme " + a.nr + "\"")
     : "Weiter: \"Übernehme " + a.nr + "\" · \"Erledigt " + a.nr + "\"");
   return z.join("\n");
 }
@@ -135,7 +135,8 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
   if (mK) { akte.name = (mK[1] || "").trim().slice(0, 60) || akte.name;
             akte.tel  = (mK[2] || "").trim().slice(0, 40) || akte.tel; }
   // WhatsApp liefert den Profilnamen mit: besser als "Name unbekannt"
-  if (!akte.name && profilName) akte.name = String(profilName).trim().slice(0, 60);
+  if (mK && (mK[1] || "").trim()) akte.nameQuelle = "kunde";
+  if (!akte.name && profilName) { akte.name = String(profilName).trim().slice(0, 60); akte.nameQuelle = "profil"; }
   if (mV) { akte.schaden  = (mV[1] || "").trim().slice(0, 120) || akte.schaden;
             akte.fahrzeug = (mV[2] || "").trim().slice(0, 120) || akte.fahrzeug; }
   if (mT) { akte.status = akte.status === "erledigt" ? "erledigt" : "termin";
@@ -324,6 +325,20 @@ export async function anfrageBefehl(t, an) {
     return anfrageDetail(a);
   }
 
+  m = s.match(/^(?:vorbeikommen|begutachtung|einladen)\s+(\d+)$/i);
+  if (m) {
+    const liste = await alleLaden();
+    const a = liste.find(x => x.nr === Number(m[1]));
+    if (!a) return "Anfrage " + m[1] + " kenne ich nicht.";
+    const r = await zurBegutachtungEinladen(a, false);
+    a.verlauf = [...(a.verlauf || []), new Date().toLocaleDateString("de-DE") + " zur Begutachtung eingeladen" + (r.ok ? "" : " (nicht zugestellt)")];
+    if (r.ok) a.eingeladen = Date.now();
+    await jsonSchreiben("anfragen", liste);
+    return r.ok
+      ? "Erledigt: " + (a.name || "Der Kunde") + " ist zur kostenlosen Begutachtung eingeladen. Bucht er einen Termin, siehst du ihn sofort.\n\nGeschickt:\n" + r.text
+      : "Konnte Nr. " + a.nr + " nicht einladen: " + r.grund + ". Bitte selbst melden: " + (erreichbar(a) || "keine Nummer");
+  }
+
   m = s.match(/^(?:fotos?|bilder?)\s*(?:von|zu|nr\.?)?\s*(\d+)$/i);
   if (m) {
     const a = (await alleLaden()).find(x => x.nr === Number(m[1]));
@@ -505,10 +520,118 @@ async function einmalHeute(name) {
   return r === "OK";
 }
 
+
+// ---- Kunden nicht verlieren (13.11.2026) -----------------------------
+// WhatsApp laesst freie Nachrichten nur 24 Std. nach der letzten
+// Kundennachricht zu. Liegt bis dahin kein Angebot vor, ist der Kunde
+// ohne genehmigte Vorlage nicht mehr erreichbar. Deshalb:
+//   1. Dirk wird nach ERINNERUNG_STD erinnert, solange das Fenster offen ist.
+//   2. Kurz vor Fensterende schickt Alex dem Kunden einen Zwischenstand
+//      mit freien Begutachtungsterminen und einer Frage. Antwortet der
+//      Kunde, ist das Fenster wieder 24 Std. offen.
+const ERINNERUNG_STD = 3;
+const ZWISCHENSTAND_AB_STD = 10;     // fruehestens so lange nach der letzten Kundennachricht
+const FENSTER_STD = 23;              // danach nicht mehr frei schreiben
+const KUNDEN_VON = 8, KUNDEN_BIS = 20;  // Kunden nur tagsueber anschreiben
+
+function fensterOffen(a) {
+  return a.kanal === "whatsapp" && a.kundeNr && a.letzterKontakt &&
+         Date.now() - a.letzterKontakt < FENSTER_STD * 3600000;
+}
+function fensterBis(a) {
+  const ende = new Date(a.letzterKontakt + 24 * 3600000);
+  const tag = d => d.toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
+  return (tag(ende) === tag(new Date()) ? "heute " : "morgen ") +
+    ende.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+}
+
+// Nachricht von Alex in den Gespraechsverlauf des Kunden schreiben,
+// damit Alex die Antwort des Kunden ("ja, Donnerstag") versteht.
+async function verlaufAnhaengen(kundeNr, text) {
+  const l = await jsonLesen("wa:" + kundeNr, []);
+  const letzte = l[l.length - 1];
+  if (letzte && letzte.role === "assistant" && typeof letzte.content === "string") letzte.content += "\n" + text;
+  else l.push({ role: "assistant", content: text });
+  await jsonSchreiben("wa:" + kundeNr, l.slice(-20), 86400);
+}
+
+async function freieBegutachtung(max = 3) {
+  try {
+    // Je Tag ein Vorschlag, damit der Kunde echte Auswahl hat
+    const { freieFenster } = await import("./_buchung.mjs");
+    const tage = (await freieFenster(max)).slice(0, max);
+    const t = tage.map(d => d.label + " (" + Number(d.datum.slice(8)) + "." + Number(d.datum.slice(5, 7)) + ".) " +
+      d.fenster[0][0] + "–" + d.fenster[0][1] + " Uhr");
+    return t.length > 1 ? t.slice(0, -1).join(", ") + " oder " + t[t.length - 1] : t.join("");
+  } catch (_) { return ""; }
+}
+
+// Kunde zur kostenlosen Begutachtung einladen (Dirk: "Vorbeikommen N",
+// oder automatisch als Zwischenstand). Rueckgabe wie anKunde.
+async function zurBegutachtungEinladen(a, zwischenstand) {
+  if (!fensterOffen(a)) return { ok: false, grund: "der Kunde hat seit über 24 Std. nicht geschrieben" };
+  const frei = await freieBegutachtung(3);
+  // Profilnamen aus WhatsApp ("Mo 🚗") nicht als Anrede verwenden
+  const anrede = "Guten Tag" + (a.name && a.nameQuelle !== "profil" ? " " + a.name : "") + ", hier ist noch einmal Alex von der Autolackiererei in Britz. ";
+  const text = anrede + (zwischenstand
+      ? "Kurzer Zwischenstand: Ihre Anfrage liegt bei unserem Team, der Kostenvoranschlag ist noch in Arbeit. "
+      : "Unser Team möchte sich Ihren Schaden gern einmal direkt ansehen, damit der Preis wirklich stimmt. ") +
+    "Wenn Sie nicht warten möchten: Die Begutachtung ist kostenlos und dauert etwa 15 bis 30 Minuten, Haarlemer Straße 48-54 in Britz." +
+    (frei ? " Frei wäre zum Beispiel " + frei + "." : "") +
+    " Soll ich Ihnen einen Termin eintragen, oder warten Sie lieber auf den Kostenvoranschlag?";
+  if (!await sendWA(a.kundeNr, text)) return { ok: false, grund: "WhatsApp hat die Nachricht nicht angenommen" };
+  await verlaufAnhaengen(a.kundeNr, text).catch(() => {});
+  return { ok: true, text };
+}
+
+export async function kundenHalten() {
+  const j = berlinJetzt();
+  const liste = await alleLaden();
+  const offen = liste.filter(a => a.status === "neu" && a.gemeldetNeu && fensterOffen(a));
+  let geaendert = false;
+  const fuerDirk = [];
+
+  // 1) Erinnerung an Dirk (nur zu seinen Zeiten)
+  if (!istRuhezeit() && j.wochentag >= 1 && j.wochentag <= 5) {
+    for (const a of offen) {
+      if (a.erinnert || Date.now() - a.ts < ERINNERUNG_STD * 3600000) continue;
+      a.erinnert = Date.now(); geaendert = true;
+      fuerDirk.push("· Nr. " + a.nr + " " + (a.name || "Name nicht genannt") + " · " + (erreichbar(a) || "") +
+        "\n  " + anliegenKurz(a).slice(0, 90) + "\n  WhatsApp offen bis " + fensterBis(a) + " Uhr");
+    }
+  }
+  if (fuerDirk.length) {
+    const nrB = (fuerDirk[0].match(/Nr\. (\d+)/) || [])[1] || "3";
+    await anDirk("⏰ Warten auf dein Angebot (" + fuerDirk.length + ")\n────────\n" + fuerDirk.join("\n") +
+      "\n\nAntworten mit \"Angebot " + nrB + ": [Preis], [was gemacht wird]\"\n" +
+      "oder \"Vorbeikommen " + nrB + "\": Ich lade den Kunden zur kostenlosen Begutachtung ein und schlage freie Zeiten vor.\n" +
+      "Kommt bis kurz vor Fensterende nichts, schicke ich dem Kunden selbst einen Zwischenstand mit Terminvorschlag.",
+      fuerDirk.length + " Anfrage(n) warten auf dein Angebot").catch(() => {});
+  }
+
+  // 2) Zwischenstand an den Kunden kurz vor Fensterende
+  if (j.stunde >= KUNDEN_VON && j.stunde < KUNDEN_BIS) {
+    for (const a of offen) {
+      if (a.zwischenstand || Date.now() - a.letzterKontakt < ZWISCHENSTAND_AB_STD * 3600000) continue;
+      const r = await zurBegutachtungEinladen(a, true);
+      a.zwischenstand = Date.now(); geaendert = true;
+      a.verlauf = [...(a.verlauf || []), new Date().toLocaleDateString("de-DE") + " Zwischenstand an Kunden" + (r.ok ? "" : " (nicht zugestellt)")];
+      if (r.ok) await anDirk("📨 Nr. " + a.nr + " (" + (a.name || "Kunde") + "): Noch kein Angebot, deshalb habe ich dem Kunden einen Zwischenstand " +
+        "geschickt und eine kostenlose Begutachtung angeboten. Antwortet er, ist WhatsApp wieder 24 Std. offen.",
+        "Zwischenstand an Nr. " + a.nr).catch(() => {});
+    }
+  }
+  if (geaendert) await jsonSchreiben("anfragen", liste.slice(-120));
+  return fuerDirk.length;
+}
+
 export async function weckerAufgaben() {
   const j = berlinJetzt();
   const werktag = j.wochentag >= 1 && j.wochentag <= 5;
   const erledigt = [];
+
+  // 0) Kunden nicht verlieren: Erinnerung an Dirk, Zwischenstand an Kunden
+  try { if (await kundenHalten()) erledigt.push("erinnerung"); } catch (e) { console.error("kundenHalten", e && e.message); }
 
   // 1) Morgenbriefing, Werktage ab 8 Uhr
   if (werktag && j.stunde >= 8 && !istRuhezeit() && await einmalHeute("briefing")) {
@@ -573,6 +696,7 @@ export async function weckerAufgaben() {
       "Angebote verschickt: " + ang.length + "\n" +
       "Abgeschlossen: " + erl.length + "\n" +
       "Noch offen gesamt: " + liste.filter(a => !["erledigt", "gespraech"].includes(a.status)).length + "\n" +
+      reaktionszeit(liste, woche) +
       (k ? "Letzte Auswertung (" + k.d + "): Abschlüsse " + k.mit_abschluss + ", Abbrüche " + k.abbrueche + ", Schleifen " + k.schleifen + "\n" : "") +
       "Gelernte Regeln aktiv: " + aktiv.length + (offenVorschlaege.length ? " · " + offenVorschlaege.length + " Vorschläge warten auf dein Ok (\"Lernen\")" : "") + "\n" +
       "Technische Aussetzer diese Woche: " + fehler + (fehler ? " (Einzelheiten: \"Status\")" : "") +
@@ -582,6 +706,17 @@ export async function weckerAufgaben() {
   }
 
   return erledigt;
+}
+
+// Wie schnell bekommen Kunden ein Angebot? Die wichtigste Zahl, damit
+// keine Anfrage liegen bleibt.
+function reaktionszeit(liste, seit) {
+  const mit = liste.filter(a => a.angebotTs && a.angebotTs > seit);
+  const std = mit.map(a => (a.angebotTs - a.ts) / 3600000).sort((x, y) => x - y);
+  const median = std.length ? std[Math.floor(std.length / 2)] : null;
+  const liegen = liste.filter(a => a.status === "neu" && Date.now() - a.ts > 86400000).length;
+  return (median !== null ? "Zeit bis zum Angebot (Mittel): " + (median < 24 ? Math.round(median) + " Std." : Math.round(median / 24) + " Tage") + "\n" : "") +
+    "Länger als 1 Tag ohne Angebot: " + liegen + (liegen ? " ⚠" : "") + "\n";
 }
 
 // ---- Kontext fuer Alex im Gespraech ------------------------------------

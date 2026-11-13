@@ -214,7 +214,8 @@ async function verarbeite(req) {
       "• Fotos, die vor dem 13.11. kamen, sind nicht mehr abrufbar. Dann ehrlich sagen und die Nummer zum Nachfragen nennen.\n\n" +
       "BEFEHLE, DIE ES WIRKLICH GIBT:\n" +
       "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Alle Details\" · \"Angebot 3: [Preis], [was gemacht wird]\" · " +
-      "\"Erledigt 3\" · \"Nachfassen 3\" · \"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · " +
+      "\"Erledigt 3\" · \"Nachfassen 3\" · \"Vorbeikommen 3\" (Kunde wird zur kostenlosen Begutachtung eingeladen, mit freien Zeiten) · " +
+      "\"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · " +
       "\"Fertig 3\" (Auto fertig) · \"Merk dir: …\" · \"Protokoll\" · \"Status\" · \"Hilfe\".\n" +
       "Erfinde keine weiteren Befehle oder Funktionen. Kannst du etwas nicht, sag es klar und nenne den passenden Befehl.\n" +
       "Website-Kunden kannst du nicht anschreiben, dann die Rufnummer nennen. WhatsApp-Kunden, die über 24 Stunden " +
@@ -754,6 +755,7 @@ async function handleOwnerCommand(from, text) {
       "• Alle Details – alle offenen samt Fotos\n" +
       "• Angebot 3: 480 Euro, Kotflügel richten – ich schicke es dem Kunden\n" +
       "• Erledigt 3 / Nachfassen 3 – abschließen oder nachhaken\n" +
+      "• Vorbeikommen 3 – Kunde wird zur kostenlosen Begutachtung eingeladen\n" +
       "• Übernehme 3 – du schreibst selbst mit dem Kunden, \"Fertig\" beendet\n" +
       "• Mitlesen an / aus – Kundengespräche mitlesen\n" +
       "TERMINE\n" +

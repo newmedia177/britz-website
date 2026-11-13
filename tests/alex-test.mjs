@@ -195,6 +195,33 @@ pruefe("offene Anfrage nach 40 Tagen noch da, erledigte weg", off.length === 1 &
 pruefe("alte Fotos: ehrlicher Hinweis", /nicht gemerkt/.test(await A.anfrageBefehl("Fotos 2", DIRK)));
 pruefe("'Merk dir: alle Fotos …' bleibt Lernbefehl", !A.willAlleDetails("Merk dir: alle Fotos bitte vorher prüfen"));
 
+// ---- 8. Kunden nicht verlieren ----------------------------------------
+log("\n8. Kunden nicht verlieren");
+reset(); uhr("2026-11-16T08:00:00Z");   // Montag 9:00 Berlin
+kiAntwort = "Danke, unser Team kalkuliert das. [[KVA|Selbstzahler|Golf 7|1 Bild]]";
+await waNachricht(KUNDE, "Stoßstange zerkratzt", "bild");
+uhr("2026-11-16T11:30:00Z"); gesendet = [];   // 12:30, 3,5 Std. spaeter
+await A.weckerAufgaben();
+if (process.env.ZEIGE) log("\n>>> " + gesendet.filter(g => g.an === "dirk").map(g => g.text).join("\n---\n") + "\n");
+pruefe("nach 3 Std.: Erinnerung an Dirk mit Fensterende", gesendet.some(g => g.an === "dirk" && /Warten auf dein Angebot/.test(g.text) && /offen bis/.test(g.text)));
+gesendet = []; await A.weckerAufgaben();
+pruefe("Erinnerung nur einmal", !gesendet.some(g => /Warten auf dein Angebot/.test(g.text)));
+uhr("2026-11-16T18:30:00Z"); gesendet = [];   // 19:30, 10,5 Std. spaeter
+await A.weckerAufgaben();
+const zw = gesendet.find(g => g.an === "kunde");
+if (process.env.ZEIGE) log("\n>>> " + (zw && zw.text) + "\n");
+pruefe("vor Fensterende: Zwischenstand an Kunden mit Frage", zw && /Zwischenstand/.test(zw.text) && /\?$/.test(zw.text.trim()));
+pruefe("Zwischenstand ohne Profilnamen als Anrede", zw && /^Guten Tag, hier ist/.test(zw.text));
+pruefe("Zwischenstand steht im Verlauf fuer Alex", (sp["wa:" + KUNDE] || "").includes("Zwischenstand"));
+uhr("2026-11-16T21:30:00Z"); gesendet = []; await A.weckerAufgaben();
+pruefe("kein zweiter Zwischenstand, nachts nichts an Kunden", !gesendet.some(g => g.an === "kunde"));
+reset(); uhr("2026-11-16T08:00:00Z");
+kiAntwort = "Danke für das Foto.";
+await waNachricht(KUNDE, "Delle Tür", "bild"); gesendet = [];
+await waNachricht(DIRK, "Vorbeikommen 1");
+pruefe("Vorbeikommen 1: Kunde bekommt Einladung mit freien Zeiten", gesendet.some(g => g.an === "kunde" && /kostenlos/.test(g.text) && /Uhr/.test(g.text)));
+pruefe("Dirk bekommt Bestätigung", gesendet.some(g => g.an === "dirk" && /eingeladen/.test(g.text)));
+
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));
 console.error = stumm;

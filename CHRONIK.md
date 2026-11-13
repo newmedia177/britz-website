@@ -3,6 +3,7 @@
 Neueste oben. Wird ab jetzt von scripts/version.mjs gepflegt.
 Die Nummer zählt nur hoch, nie zurück.
 
+- **20** · 13.11.2026 · Kunden nicht verlieren: Erinnerung an Dirk nach 3 Std. ohne Angebot (mit Fensterende), automatischer Zwischenstand an den Kunden vor Ablauf des 24-Std.-Fensters mit kostenlosen Begutachtungsterminen und Rückfrage, neuer Befehl „Vorbeikommen N“, Wochenbericht mit Zeit bis zum Angebot
 - **19** · 13.11.2026 · Anfrage-Details ohne missverständlichen Beispielpreis („480 Euro“), Hinweis „selbst anrufen“ bei Kunden, die über 24 Std. still sind, längere Kundentexte
 - **18** · 13.11.2026 · Sichtbarkeit in KI-Suchen (ChatGPT, Gemini, Claude, Perplexity, Grok): neuer Abschnitt „Großer Unfallschaden" als fester Text, 4 neue Fragen zu Unfallschäden, Strukturdaten (Betrieb + FAQ) fest im HTML statt nur per Skript, erweiterte Betriebsdaten (Abschleppdienst 24 h, Einzugsgebiet, Leistungen), llms.txt, robots.txt mit KI-Crawlern, Sitemap-Datum
 - **17** · 13.11.2026 · Nach Dirks Video: jede neue Anfrage sofort an Dirk (Name aus WhatsApp-Profil, Nummer, Anliegen, Fotos mit Nr.), Meldung „kalkulierbar", Befehle „Anfrage N" (samt Fotos), „Fotos N", „Alle Details" auch in freier Formulierung, Chef-Alex liest echte Akten statt alter Terminliste, Briefing mit Name/Nummer/Anliegen, offene Anfragen bleiben bis 90 Tage, kürzere Trennlinien, Datenschutz ergänzt
