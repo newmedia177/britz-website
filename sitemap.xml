@@ -2,13 +2,13 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://www.autolackiererei-britz.de/</loc>
-    <lastmod>2026-08-19</lastmod>
+    <lastmod>2026-11-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://www.autolackiererei-britz.de/rechtliches</loc>
-    <lastmod>2026-08-19</lastmod>
+    <loc>https://www.autolackiererei-britz.de/rechtliches.html</loc>
+    <lastmod>2026-08-08</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>

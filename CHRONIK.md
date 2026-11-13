@@ -3,6 +3,7 @@
 Neueste oben. Wird ab jetzt von scripts/version.mjs gepflegt.
 Die Nummer zählt nur hoch, nie zurück.
 
+- **18** · 13.11.2026 · Sichtbarkeit in KI-Suchen (ChatGPT, Gemini, Claude, Perplexity, Grok): neuer Abschnitt „Großer Unfallschaden" als fester Text, 4 neue Fragen zu Unfallschäden, Strukturdaten (Betrieb + FAQ) fest im HTML statt nur per Skript, erweiterte Betriebsdaten (Abschleppdienst 24 h, Einzugsgebiet, Leistungen), llms.txt, robots.txt mit KI-Crawlern, Sitemap-Datum
 - **17** · 13.11.2026 · Nach Dirks Video: jede neue Anfrage sofort an Dirk (Name aus WhatsApp-Profil, Nummer, Anliegen, Fotos mit Nr.), Meldung „kalkulierbar", Befehle „Anfrage N" (samt Fotos), „Fotos N", „Alle Details" auch in freier Formulierung, Chef-Alex liest echte Akten statt alter Terminliste, Briefing mit Name/Nummer/Anliegen, offene Anfragen bleiben bis 90 Tage, kürzere Trennlinien, Datenschutz ergänzt
 - **16** · 29.10.2026 · Leere KI-Antwort: zweiter Versuch vor dem Notsatz, Ersatztext passend zur Lage (Termin, Kostenvoranschlag, Dirk geduzt), Zeitlimit für die KI auf WhatsApp, verständliche Fehlermail mit Handlungsbedarf
 - **15** · 22.10.2026 · Neue Bilder: Lackierkabine (Abschnitt „Erfahrung") und Hof-Einfahrt, neue Dateinamen wegen Browser-Cache
