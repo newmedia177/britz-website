@@ -11,11 +11,15 @@
 //      schliesst.
 //   3. Haengengebliebene Meldungen per E-Mail nachreichen, wenn
 //      WhatsApp sie nicht annimmt (24-Stunden-Fenster von Meta).
+//   4. Fallpflege: Karte an Dirk, sobald ein Gespraech ruht; Nachhaken,
+//      wenn ein Kunde verstummt; Zwischenstand, bevor WhatsApp schliesst.
+//   5. Lernrunde.
+// Aufruf alle 15 Minuten durch cron-job.org (Vercel Hobby erlaubt selbst
+// nur einen Lauf am Tag).
 
 import { warteschlangeZustellen, offeneGespraecheMelden } from "./_termin.mjs";
-import { weckerAufgaben } from "./_anfragen.mjs";
-import { lernrunde, LERN_INTERVALL } from "./_lernen.mjs";
-import { redis } from "./_termin.mjs";
+import { weckerAufgaben, herzschlag } from "./_anfragen.mjs";
+import { lernPflege } from "./_lernen.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -31,9 +35,13 @@ export default async function handler(req, res) {
     }
   }
 
+  const start = Date.now();
   const ergebnis = { zugestellt: false, offene: 0, aufgaben: [] };
+  // Lebenszeichen: Daran erkennt die Anlage, dass der Wecker laeuft.
+  await herzschlag(true).catch(() => {});
   try {
-    ergebnis.aufgaben = await weckerAufgaben();   // Briefing, Wochenbericht, Erinnerungen
+    // Fallpflege, Briefing, Wochenbericht, Erinnerungen
+    ergebnis.aufgaben = await weckerAufgaben({ bis: start + 35000 });
   } catch (e) {
     console.error("cron aufgaben", e && e.message);
   }
@@ -47,12 +55,13 @@ export default async function handler(req, res) {
   } catch (e) {
     console.error("cron offene", e && e.message);
   }
-  // Faellige Lernrunde (frueher im Kundengespraech, dort bis zu 45 s Wartezeit)
+  // Lernrunde: woechentlich oder nach zehn neuen Gespraechen. Laeuft hier
+  // und nicht im Kundengespraech, weil sie bis zu 45 Sekunden braucht.
   try {
-    const z = Number(await redis("GET", "lern:zaehler")) || 0;
-    if (z >= LERN_INTERVALL) ergebnis.lernrunde = await lernrunde();
+    // Nur wenn noch genug Zeit ist; sonst macht es der naechste Lauf.
+    if (Date.now() - start < 12000) ergebnis.lernen = await lernPflege();
   } catch (e) {
-    console.error("cron lernrunde", e && e.message);
+    console.error("cron lernen", e && e.message);
   }
   res.status(200).json({ ok: true, ...ergebnis, zeit: new Date().toISOString() });
 }

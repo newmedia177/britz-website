@@ -209,17 +209,80 @@ export async function sendWA(to, body) {
         text: { preview_url: false, body: String(body).slice(0, 4000) }
       })
     }, NETZ_ZEITLIMIT_MS);
-    if (!r.ok) console.error("send", r.status, await r.text().catch(() => ""));
-    return r.ok;
+    if (!r.ok) { console.error("send", r.status, await r.text().catch(() => "")); return false; }
+    return await kennungAus(r);
   } catch (e) {
     console.error("send", e);
     return false;
   }
 }
 
+// WhatsApp antwortet mit der Kennung der verschickten Nachricht. Wir
+// geben sie zurueck (immer "wahr"), damit eine spaetere Antwort von Dirk
+// auf genau diese Nachricht der richtigen Anfrage zugeordnet werden kann.
+async function kennungAus(r) {
+  try { const j = await r.json(); return (j && j.messages && j.messages[0] && j.messages[0].id) || true; }
+  catch (_) { return true; }
+}
+
+// ---- Nachricht mit bis zu drei Antwort-Knoepfen ----------------------
+// Geht wie Freitext nur im 24-Stunden-Fenster. Grenzen von WhatsApp:
+// Text hoechstens 1024 Zeichen, Knopf hoechstens 20 Zeichen.
+export async function sendWAKnoepfe(to, text, knoepfe) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
+  const k = (knoepfe || []).filter(x => x && x.id && x.titel).slice(0, 3);
+  if (!k.length) return sendWA(to, text);
+  try {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp", recipient_type: "individual", to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: String(text).slice(0, 1024) },
+          action: { buttons: k.map(x => ({ type: "reply", reply: { id: String(x.id).slice(0, 200), title: String(x.titel).slice(0, 20) } })) }
+        }
+      })
+    }, NETZ_ZEITLIMIT_MS);
+    if (!r.ok) { console.error("knoepfe", r.status, await r.text().catch(() => "")); return false; }
+    return await kennungAus(r);
+  } catch (e) { console.error("knoepfe", e && e.message); return false; }
+}
+
+// ---- "Gelesen" + "schreibt ..." --------------------------------------
+// Der Kunde sieht sofort die blauen Haken und die Tipp-Anzeige (bis zu
+// 25 Sekunden oder bis die Antwort kommt). Ohne das wirkt die Pause, in
+// der die Antwort entsteht, wie Funkstille.
+export async function sendWAGelesen(nachrichtId) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID || !nachrichtId) return false;
+  try {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: nachrichtId, typing_indicator: { type: "text" } })
+    }, 4000);
+    return r.ok;
+  } catch (_) { return false; }
+}
+
+function nummernAus(s) {
+  return String(s || "").split(",").map(x => x.replace(/\D/g, "")).filter(Boolean);
+}
+// Wer Kundenmeldungen bekommt (Dirk).
 export function inhaberNummern() {
-  return (process.env.OWNER_NUMBERS || "")
-    .split(",").map(s => s.replace(/\D/g, "")).filter(Boolean);
+  return nummernAus(process.env.OWNER_NUMBERS);
+}
+// Wer Technik- und Lernmeldungen bekommt. Ohne eigene Einstellung
+// dieselben wie oben. Mit TECHNIK_NUMMERN bleibt Dirk davon verschont.
+export function technikNummern() {
+  const t = nummernAus(process.env.TECHNIK_NUMMERN);
+  return t.length ? t : inhaberNummern();
+}
+// Wer Befehle geben darf.
+export function berechtigteNummern() {
+  return [...new Set([...inhaberNummern(), ...nummernAus(process.env.TECHNIK_NUMMERN)])];
 }
 
 // ---- Zustellung an den Inhaber, dreistufig -------------------------
@@ -271,22 +334,50 @@ export async function fehlerLog(art, grund) {
   } catch (_) {}
 }
 
-export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder = [] } = {}) {
-  const nummern = inhaberNummern();
+// Eine Meldung frei verschicken: mit Knoepfen, wenn welche dabei sind.
+// Ist der Text fuer eine Knopf-Nachricht zu lang, kommt erst der Text und
+// dann eine kurze Zeile mit den Knoepfen.
+async function freiSenden(n, text, knoepfe) {
+  const t = String(text).slice(0, 3900);
+  if (!knoepfe || !knoepfe.length) return sendWA(n, t);
+  if (t.length <= 1024) {
+    const mitKnopf = await sendWAKnoepfe(n, t, knoepfe);
+    if (mitKnopf) return mitKnopf;
+    // Lehnt WhatsApp die Knopf-Nachricht ab, obwohl das Fenster offen ist,
+    // kommt der Text eben ohne Knoepfe. Lieber so als gar nicht.
+    const ohne = await sendWA(n, t);
+    if (ohne) await fehlerLog("knoepfe", "Karte ging nur ohne Knöpfe raus");
+    return ohne;
+  }
+  const id = await sendWA(n, t);
+  if (!id) return false;
+  await sendWAKnoepfe(n, t.split("\n")[0].slice(0, 200), knoepfe);
+  return id;
+}
+// Kennung einer Karte merken: Antwortet Dirk direkt auf diese Nachricht,
+// weiss Alex, um welche Anfrage es geht.
+async function karteMerken(id, akteNr) {
+  if (akteNr && typeof id === "string") await redis("SET", "karte:" + id, String(akteNr), "EX", 21 * 86400);
+}
+
+export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder = [], knoepfe = null, akteNr = 0 } = {}) {
+  const nummern = art === "technik" ? technikNummern() : inhaberNummern();
   if (!nummern.length) return false;
   const titel = vorlagenFeld(kurz || String(text).split("\n")[0], 120);
   let irgendwo = false;
 
   for (const n of nummern) {
     // Stufe 1
-    if (await sendWA(n, String(text).slice(0, 3900))) {
-      for (const id of (bilder || [])) await sendWABild(n, id, titel);
+    const id = await freiSenden(n, text, knoepfe);
+    if (id) {
+      await karteMerken(id, akteNr);
+      for (const b of (bilder || [])) await sendWABild(n, b, titel);
       irgendwo = true;
       continue;
     }
     // Stufe 2: aufheben + anstupsen
     const liste = await jsonLesen("unzugestellt:" + n, []);
-    liste.push({ text: String(text).slice(0, 3900), bilder: bilder || [], ts: Date.now() });
+    liste.push({ text: String(text).slice(0, 3900), bilder: bilder || [], knoepfe: knoepfe || null, akteNr: akteNr || 0, ts: Date.now() });
     await jsonSchreiben("unzugestellt:" + n, liste.slice(-40), 14 * 86400);
 
     const vorlage = art === "tagesstart"
@@ -310,7 +401,8 @@ export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder =
     const ok = await sendMail("Alex: " + titel.slice(0, 80), String(text) +
       "\n\n────────\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
       "nicht zustellen konnte. Sobald du Alex kurz schreibst, kommt alles " +
-      "Liegengebliebene auch dort an.");
+      "Liegengebliebene auch dort an.",
+      art === "technik" ? (process.env.TECHNIK_MAIL || process.env.NOTFALL_MAIL) : undefined);
     if (ok) irgendwo = true;
     else await fehlerLog("zustellung", "Meldung an Inhaber weder per WhatsApp noch per E-Mail zugestellt: " + titel);
   }
@@ -325,8 +417,10 @@ export async function inhaberNachliefern(n) {
   let geliefert = 0;
   for (const e of liste) {
     const kopf = liste.length > 1 ? "📬 Liegengeblieben (" + (geliefert + 1) + "/" + liste.length + ")\n" : "📬 Liegengeblieben\n";
-    if (!(await sendWA(n, kopf + e.text))) break;
-    for (const id of (e.bilder || [])) await sendWABild(n, id, vorlagenFeld(e.text.split("\n")[0], 120));
+    const id = await freiSenden(n, kopf + e.text, e.knoepfe);
+    if (!id) break;
+    await karteMerken(id, e.akteNr);
+    for (const b of (e.bilder || [])) await sendWABild(n, b, vorlagenFeld(e.text.split("\n")[0], 120));
     geliefert++;
   }
   await jsonSchreiben("unzugestellt:" + n, liste.slice(geliefert), 14 * 86400);
@@ -476,50 +570,111 @@ export function istRuhezeit(d = new Date()) {
   return std < RUHE_BIS || std >= RUHE_VON;
 }
 
-// Zurückgehaltene Meldungen ablegen
-async function warteschlangeAnhaengen(text, bilder) {
-  const liste = await jsonLesen("wartend", []);
-  liste.push({ text, bilder: Array.isArray(bilder) ? bilder : [], ts: Date.now() });
+// ---- Kleine Wochenzaehler (fuer Wochenbericht und Lernrunde) ----------
+// Schluessel je Kalenderwoche (Montag), neun Wochen haltbar.
+function wochenSchluessel(vorWochen = 0) {
+  const d = new Date(new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" }) + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) - 7 * vorWochen);
+  return d.toISOString().slice(0, 10);
+}
+export async function statPlus(name, n = 1) {
+  const k = "stat:" + wochenSchluessel() + ":" + name;
+  for (let i = 0; i < n; i++) await redis("INCR", k);
+  await redis("EXPIRE", k, 63 * 86400);
+}
+export async function statLesen(name, vorWochen = 0) {
+  return Number(await redis("GET", "stat:" + wochenSchluessel(vorWochen) + ":" + name)) || 0;
+}
+
+// Zurückgehaltene Meldungen ablegen. Eine Karte zu einer Anfrage ist eine
+// Momentaufnahme: Kommt nachts eine neuere zur selben Anfrage, ersetzt
+// sie die aeltere (Fotos bleiben erhalten). So liegt morgens pro Kunde
+// genau eine Meldung da.
+async function warteschlangeAnhaengen(text, bilder, extra = {}) {
+  let liste = await jsonLesen("wartend", []);
+  let fotos = Array.isArray(bilder) ? bilder.slice() : [];
+  if (extra.akteNr) {
+    const alt = liste.filter(e => e.akteNr === extra.akteNr);
+    fotos = [...new Set([...alt.flatMap(e => e.bilder || []), ...fotos])];
+    extra.prio = Math.max(extra.prio || 0, ...alt.map(e => e.prio || 0));
+    liste = liste.filter(e => e.akteNr !== extra.akteNr);
+  }
+  liste.push({ text, bilder: fotos, ts: Date.now(), ...extra });
   await jsonSchreiben("wartend", liste.slice(-30));
 }
 
+// Meldung an den Inhaber: tagsueber sofort, in der Ruhezeit in die
+// Morgen-Sammlung. Optionen wie zustellenAnInhaber, dazu prio (2 = dringend).
+export async function meldenOderAufheben(text, opts = {}) {
+  if (istRuhezeit()) {
+    await warteschlangeAnhaengen(text, opts.bilder, {
+      knoepfe: opts.knoepfe || null, akteNr: opts.akteNr || 0, kurz: opts.kurz || "",
+      prio: opts.prio || 0, art: opts.art || "meldung"
+    });
+    return true;
+  }
+  return zustellenAnInhaber(text, opts);
+}
+
 // Beim nächsten Kontakt in der Bürozeit alles Zurückgehaltene zustellen.
-// Wird bei jeder eingehenden Nachricht aufgerufen.
+// Wird vom Wecker und bei jeder eingehenden Nachricht aufgerufen.
 export async function warteschlangeZustellen() {
   if (istRuhezeit()) return false;
-  const liste = await jsonLesen("wartend", []);
+  if (!inhaberNummern().length) return false;
+  // Lesen und Leeren in einem Schritt, damit zwei gleichzeitige Aufrufe
+  // (Wecker und Kundennachricht) nicht doppelt zustellen.
+  let roh = await redis("GETDEL", "wartend");
+  if (roh === undefined) {                  // Befehl nicht verfuegbar: der alte Weg
+    roh = await redis("GET", "wartend");
+    if (roh === undefined) return false;
+    await redis("DEL", "wartend");
+  }
+  let liste = [];
+  try { liste = JSON.parse(roh || "[]") || []; } catch (_) {}
   if (!liste.length) return false;
 
-  const nummern = inhaberNummern();
-  if (!nummern.length) return false;
+  const karten = liste.filter(e => e.akteNr || e.knoepfe || e.art === "technik");
+  const einfach = liste.filter(e => !karten.includes(e));
+  let ok = false;
 
-  const kopf = liste.length === 1
-    ? "🌙 Kam heute Nacht rein:\n────────\n"
-    : "🌙 Kam heute Nacht rein (" + liste.length + " Meldungen):\n" +
-      "────────\n";
-  const text = kopf + liste.map(e => e.text).join("\n\n────────\n");
+  // Karten einzeln, Dringendes zuerst: je Kunde eine Nachricht mit Knoepfen
+  karten.sort((a, b) => (b.prio || 0) - (a.prio || 0) || a.ts - b.ts);
+  for (const e of karten) {
+    ok = (await zustellenAnInhaber("🌙 " + e.text, {
+      kurz: e.kurz || undefined, bilder: e.bilder || [], knoepfe: e.knoepfe || null,
+      akteNr: e.akteNr || 0, art: e.art || "meldung"
+    })) || ok;
+  }
 
-  const bilder = liste.flatMap(e => e.bilder || []);
-  const ok = await zustellenAnInhaber(text, {
-    kurz: liste.length === 1 ? String(liste[0].text || "").split("\n")[0] : liste.length + " Meldungen aus der Nacht",
-    bilder
-  });
-  // Die Zustellung hebt Nicht-Zustellbares selbst auf, die Nachtliste
-  // kann deshalb in jedem Fall geleert werden.
-  await jsonSchreiben("wartend", []);
+  if (einfach.length) {
+    const kopf = einfach.length === 1
+      ? "🌙 Kam heute Nacht rein:\n────────\n"
+      : "🌙 Kam heute Nacht rein (" + einfach.length + " Meldungen):\n" +
+        "────────\n";
+    const text = kopf + einfach.map(e => e.text).join("\n\n────────\n");
+    ok = (await zustellenAnInhaber(text, {
+      kurz: einfach.length === 1 ? String(einfach[0].text || "").split("\n")[0] : einfach.length + " Meldungen aus der Nacht",
+      bilder: einfach.flatMap(e => e.bilder || [])
+    })) || ok;
+  }
   return ok;
 }
 
 // ---- Angefangene, nicht beendete Gespraeche -------------------------
-// Gerade im Web-Chat sind die Daten weg, sobald der Kunde das Fenster
-// schliesst. Wir merken deshalb pro Sitzung, was bisher bekannt ist,
-// und melden sie dem Inhaber, wenn eine Weile nichts mehr kam.
-// Gespeichert wird nur, was der Kunde selbst genannt hat.
+// Frueher bekam Dirk dafuer eine eigene Meldung ("Angefangen, nicht zu
+// Ende gefuehrt"), losgeloest von der Anfrage und oft ohne Namen. Jetzt
+// gilt:
+//   - WhatsApp: Jede Unterhaltung hat eine Akte. Ob sie haengt und was
+//     dann passiert, entscheidet die Fallpflege (api/_anfragen.mjs), und
+//     Dirk bekommt EINE Karte pro Kunde.
+//   - Website mit Rueckweg (Nummer, E-Mail) oder Fotos: ebenfalls Akte.
+//   - Website ohne Rueckweg: Niemand kann etwas tun. Das wird nur noch
+//     gezaehlt (Wochenbericht, Lernrunde), nicht mehr gemeldet.
 const OFFEN_REIF_MIN = 25;    // so lange Stille, dann gilt es als liegengeblieben
 const OFFEN_TTL_TAGE = 3;
 
 export async function gespraechMerken({ sitzung, kanal, name, tel, thema, fotos, abgeschlossen }) {
-  if (!sitzung) return;
+  if (!sitzung || kanal !== "web") return;
   const schluessel = "offen:" + sitzung;
   if (abgeschlossen) {
     // Termin gemeldet oder Kontakt weitergegeben: nichts mehr offen.
@@ -532,7 +687,6 @@ export async function gespraechMerken({ sitzung, kanal, name, tel, thema, fotos,
   try { alt = JSON.parse(await redis("GET", schluessel)) || {}; } catch (_) {}
   const eintrag = {
     kanal,
-    // Einmal Genanntes nicht wieder verlieren
     name: (name || alt.name || "").slice(0, 60),
     tel: (tel || alt.tel || "").slice(0, 40),
     thema: (thema || alt.thema || "").slice(0, 160),
@@ -549,54 +703,26 @@ export async function gespraechMerken({ sitzung, kanal, name, tel, thema, fotos,
   }
 }
 
-// Wird vom Wecker (api/cron.js) aufgerufen.
+// Wird vom Wecker (api/cron.js) aufgerufen. Zaehlt Website-Besucher, die
+// ohne Rueckweg gegangen sind. Rueckgabe: Anzahl.
 export async function offeneGespraecheMelden() {
   const idx = await jsonLesen("offen:index", []);
   if (!idx.length) return 0;
   const jetzt = Date.now();
-  const reif = [], bleibt = [];
+  const bleibt = [];
+  let gegangen = 0;
 
   for (const s of idx) {
     let e = null;
     try { e = JSON.parse(await redis("GET", "offen:" + s)); } catch (_) {}
     if (!e) continue;                                  // abgelaufen oder abgeschlossen
     if (jetzt - e.ts < OFFEN_REIF_MIN * 60000) { bleibt.push(s); continue; }
-    if (e.zuege < 2 && !e.fotos) {                     // blosses Antippen, kein Anliegen
-      await redis("DEL", "offen:" + s);
-      continue;
-    }
-    reif.push({ s, e });
+    if (e.zuege >= 2 && !e.fotos && !e.tel) gegangen++;   // echtes Anliegen, kein Rueckweg
+    await redis("DEL", "offen:" + s);
   }
-  if (!reif.length) { await jsonSchreiben("offen:index", bleibt); return 0; }
-
-  const zeilen = reif.map(({ e }) => {
-    const min = Math.round((jetzt - e.ts) / 60000);
-    return "• " + (e.kanal === "web" ? "Website-Chat" : "WhatsApp") +
-      (e.name ? ", " + e.name : ", Name nicht genannt") +
-      (e.tel ? ", " + e.tel + (rufnummerPruefen(e.tel).hinweis ? " (" + rufnummerPruefen(e.tel).hinweis + ")" : "") : ", keine Nummer") +
-      "\n  " + (e.thema || "kein Text") +
-      (e.fotos ? "\n  " + e.fotos + " Foto(s) geschickt" : "") +
-      "\n  seit " + min + " Min. keine Antwort mehr";
-  });
-
-  const text =
-    "Angefangen, nicht zu Ende geführt (" + reif.length + ")\n" +
-    "────────\n" + zeilen.join("\n\n") +
-    "\n\nDiese Leute haben angefragt und sich dann nicht mehr gemeldet." +
-    "\nMit Nummer: kurz zurückrufen lohnt sich meist." +
-    "\nOhne Nummer über den Website-Chat: leider kein Rückweg – dort ist die Anfrage verloren.";
-
-  let zugestellt = false;
-  if (istRuhezeit()) {
-    await warteschlangeAnhaengen(text);
-    zugestellt = true;                       // kommt am Morgen mit
-  } else {
-    zugestellt = await zustellenAnInhaber(text, { kurz: reif.length + " Kunde(n) ohne Abschluss im Chat" });
-  }
-  // Gemeldete Sitzungen schliessen, damit sie nicht doppelt kommen
-  for (const { s } of reif) await redis("DEL", "offen:" + s);
+  if (gegangen) await statPlus("abbruchWeb", gegangen);
   await jsonSchreiben("offen:index", bleibt);
-  return reif.length;
+  return gegangen;
 }
 
 export function datumLesbar(iso) {

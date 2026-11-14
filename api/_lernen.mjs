@@ -10,13 +10,21 @@
 // E-Mail-Adressen, FIN, Kennzeichen und IBAN-artige Ketten ersetzt.
 // Fotos werden nie gespeichert. Aufbewahrung LERN_TAGE Tage.
 
-import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, zustellenAnInhaber,
-         istRuhezeit, fetchMitZeit, RE_KONTAKT } from "./_termin.mjs";
+import { jsonLesen, jsonSchreiben, redis, zustellenAnInhaber, meldenOderAufheben,
+         istRuhezeit, fetchMitZeit, fehlerLog, statLesen } from "./_termin.mjs";
 
-export const LERN_INTERVALL = 10;   // Gespraeche bis zur naechsten Runde
+export const LERN_INTERVALL = 10;   // neue Gespraeche bis zur naechsten Runde
 export const LERN_TAGE = 14;        // Aufbewahrung anonymisierter Gespraeche
 export const MAX_GELERNT = 15;      // Obergrenze aktiver Regeln im Prompt
+const LERN_WOCHE_MIN = 3;           // woechentliche Runde ab so vielen neuen Gespraechen
 const MAX_GESPRAECHE = 60;          // Sicherheitsdeckel im Speicher
+
+// Kennung eines WhatsApp-Kunden fuer die Lernrunde: ein Hash, nie die Nummer.
+export function lernKennung(nummer) {
+  let h = 0;
+  for (const c of String(nummer)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return "wa" + h.toString(36);
+}
 
 // ---- Anonymisierung ---------------------------------------------
 export function anonymisieren(text) {
@@ -43,7 +51,7 @@ export function anonymisieren(text) {
 export async function gespraechAblegen({ kennung, kanal, verlauf }) {
   if (!kennung || !Array.isArray(verlauf) || !verlauf.length) return false;
   const eintrag = {
-    kanal,
+    kanal, kennung,
     ts: Date.now(),
     zuege: verlauf.slice(-24).map(m => ({
       wer: m.role === "assistant" ? "Alex" : "Kunde",
@@ -77,28 +85,57 @@ async function gespraecheLaden() {
 }
 
 // ---- Auswertung -------------------------------------------------
-const RUBRIK = `Du bewertest Gespraeche eines KI-Serviceberaters ("Alex") einer Autolackiererei. Die Gespraeche sind anonymisiert. Pruefe jedes Gespraech auf diese Punkte:
-1. Abbruch: Kunde liefert Daten, danach kommt kein Abschluss (was liegt vor, was passiert, wann Rueckmeldung, nichts weiter noetig).
-2. Schleifen: dieselbe Frage zweimal gestellt, oder Zeitraeume statt konkreter Uhrzeiten.
-3. Ungeduld: Kunde schreibt "Hallo?", "und jetzt?", "???".
-4. Anrede: "Herr/Frau" mit Vornamen, Duzen des Kunden.
-5. Preisfrage nur abgewehrt, ohne Einordnung (Smart Repair vs. Bauteil, Selbstzahler vs. Versicherung).
-6. Versicherung falsch erklaert (Haftpflicht zahlt eigenen Schaden o.ae.).
-7. Zu viele Huerden vor einer Gegenleistung (drei und mehr Nachforderungen).
-8. Fragen, auf die Alex keine gute Antwort hatte (Wissensluecken), besonders wenn sie mehrfach vorkommen.
-9. Alles, was gut lief und beibehalten werden sollte (kurz).
+const RUBRIK = `Du wertest Gespraeche eines KI-Serviceberaters ("Alex") einer Autolackiererei aus, damit er besser wird. Die Gespraeche sind anonymisiert. Unter jedem Gespraech steht, was daraus geworden ist ("Ergebnis"). Zeilen mit "[Werkstatt persönlich]" hat der Chef selbst geschrieben.
 
-Antworte NUR mit JSON, ohne Erklaerung davor oder danach:
+Pruefe jedes Gespraech:
+1. Verstanden? Ist Alex konkret auf Fahrzeug, Bauteil und Anliegen eingegangen, oder hat er allgemein geantwortet?
+2. Ausstieg: Wenn der Kunde verstummt ist, nach welcher Nachricht von Alex? Was war daran die Huerde (zu lang, mehrere Bitten auf einmal, Unterlage verlangt, keine klare naechste Frage, zu frueh nach Daten gefragt)?
+3. Abbruch nach Lieferung: Kunde liefert Daten, danach kommt kein Abschluss (was liegt vor, was passiert, wann Rueckmeldung, nichts weiter noetig).
+4. Schleifen: dieselbe Frage zweimal, oder nach etwas gefragt, das schon im Gespraech stand.
+5. Ungeduld oder Aerger: "Hallo?", "und jetzt?", Beschwerde. Wie hat Alex reagiert, hat es gepasst?
+6. Nachhaken: Wenn Alex nach einer Pause nachgehakt hat, kam der Kunde zurueck? Wenn nicht: Was haette besser gepasst?
+7. Werkstatt persoenlich: Was macht der Chef anders als Alex (Ton, Laenge, Inhalt)? Das ist das Vorbild.
+8. Preisfrage nur abgewehrt, ohne Einordnung. Versicherung falsch erklaert. Anrede falsch.
+9. Wissensluecken: Fragen, auf die Alex keine gute Antwort hatte.
+10. Was gut lief und bleiben soll.
+
+Antworte NUR mit JSON, ohne Text davor oder danach:
 {
- "kennzahlen": {"gespraeche": 0, "mit_abschluss": 0, "abbrueche": 0, "schleifen": 0, "ungeduld": 0, "fragen_pro_lead": 0.0},
+ "kennzahlen": {"gespraeche": 0, "mit_abschluss": 0, "abbrueche": 0, "schleifen": 0, "ungeduld": 0, "zurueckgeholt": 0},
  "gut": ["..."],
+ "ausstieg": "Ein Satz: die haeufigste Stelle, an der Kunden aussteigen, oder leer.",
  "vorschlaege": [
-   {"regel": "Eine konkrete, kurze Anweisung an Alex (max 200 Zeichen), so formuliert, dass sie direkt in einen Prompt passt.",
-    "grund": "Was in welchem Gespraech schiefging (1 Satz)",
+   {"regel": "Eine konkrete, kurze Anweisung an Alex (max 200 Zeichen), die direkt in seinen Prompt passt.",
+    "grund": "Was in welchem Gespraech schiefging (1 Satz, ohne Kundendaten).",
+    "beispiel": "Ein Satz, wie Alex es kuenftig sagen wuerde (max 160 Zeichen), oder leer.",
     "art": "stil" oder "fachlich"}
  ]
 }
-Regeln: Maximal 5 Vorschlaege, nur wenn ein echtes Muster erkennbar ist (nicht aus einem Einzelfall). Keine Preise, keine Versicherungsberatung, keine Zusagen erfinden. Bei "fachlich" nur Vorschlaege, die eine Werkstatt bestaetigen kann. Nichts vorschlagen, was schon offensichtlich Regel ist und nur einmal verletzt wurde.`;
+Regeln: Hoechstens 3 Vorschlaege, die wichtigsten zuerst, nur bei einem echten Muster (nicht aus einem Einzelfall, ausser er hat einen Kunden gekostet). Keine Preise, keine Versicherungsberatung, keine Zusagen erfinden. Bei "fachlich" nur, was eine Werkstatt bestaetigen kann. Schlage NICHTS vor, was unter BEREITS GEREGELT steht, auch nicht umformuliert.`;
+
+// Was ist aus dem Gespraech geworden? Aus der Anfrage-Akte, ohne Namen.
+function ergebnisText(a) {
+  if (!a) return "keine Anfrage entstanden (nur Unterhaltung oder Besucher ging ohne Angaben)";
+  const tage = Math.floor((Date.now() - (a.leadTs || a.ts)) / 86400000);
+  const t = [];
+  if (a.status === "gespraech") t.push("nur Unterhaltung, keine Anfrage");
+  else if (a.status === "verloren") t.push("Besucher ging ohne Rückweg");
+  else if (a.status === "termin") t.push("Termin gebucht");
+  else if (a.status === "angebot") t.push("Angebot verschickt" + (a.angebotTs ? " nach " + Math.max(1, Math.round((a.angebotTs - (a.leadTs || a.ts)) / 3600000)) + " Std." : ""));
+  else if (a.status === "erledigt") t.push("abgeschlossen");
+  else t.push((a.kvaTs ? "an die Werkstatt übergeben" : "Angaben unvollständig") + ", noch kein Angebot, seit " + tage + " Tag(en)");
+  if (a.nachhakTs) t.push("Alex hat nachgehakt, Kunde kam " + (a.zurueckgeholt ? "zurück" : "nicht zurück"));
+  if (a.dringend) t.push("Kunde verärgert oder wartet zu lange");
+  if (a.anruf) t.push("Chef ruft persönlich an");
+  return t.join("; ");
+}
+
+function jsonAus(roh) {
+  const s = String(roh || "");
+  const a = s.indexOf("{"), e = s.lastIndexOf("}");
+  if (a < 0 || e <= a) return null;
+  try { return JSON.parse(s.slice(a, e + 1)); } catch (_) { return null; }
+}
 
 export async function lernrunde() {
   const gespraeche = await gespraecheLaden();
@@ -107,11 +144,24 @@ export async function lernrunde() {
   const frisch = gespraeche.filter(g => g.ts > seit);
   if (frisch.length < 3) return null;
 
-  const text = frisch.map((g, i) =>
-    "### Gespraech " + (i + 1) + " (" + g.kanal + ")\n" +
-    g.zuege.map(z => z.wer + ": " + z.text).join("\n")).join("\n\n");
+  // Ergebnis je Gespraech aus den Akten (Zuordnung ueber die Kennung)
+  const akten = await jsonLesen("anfragen", []);
+  const akteZu = g => akten.filter(a => g.kennung && (g.kanal === "whatsapp"
+    ? a.kundeNr && lernKennung(a.kundeNr) === g.kennung
+    : a.sitzung === g.kennung)).pop() || null;
 
-  let ergebnis = null;
+  const aktiv = await jsonLesen("lern:aktiv", []);
+  const offen = await jsonLesen("lern:vorschlaege", []);
+  const abgelehnt = await jsonLesen("lern:abgelehnt", []);
+  const geregelt = [...aktiv.map(a => a.regel), ...offen.map(v => v.regel), ...abgelehnt.map(v => v.regel + " (abgelehnt)")];
+
+  const text = (geregelt.length ? "BEREITS GEREGELT:\n" + geregelt.map(r => "- " + r).join("\n") + "\n\n" : "") +
+    frisch.map((g, i) =>
+      "### Gespraech " + (i + 1) + " (" + g.kanal + ")\n" +
+      g.zuege.map(z => z.wer + ": " + z.text).join("\n") +
+      "\nErgebnis: " + ergebnisText(akteZu(g))).join("\n\n");
+
+  let ergebnis = null, grund = "";
   try {
     const r = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -121,65 +171,99 @@ export async function lernrunde() {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
-        max_tokens: 1500,
+        model: process.env.CLAUDE_MODEL_DENKEN || process.env.CLAUDE_MODEL || "claude-sonnet-5",
+        max_tokens: 1800,
         system: RUBRIK,
         messages: [{ role: "user", content: text.slice(0, 60000) }]
       })
     }, 45000);
-    if (!r.ok) { console.error("lernrunde", r.status); return null; }
-    const j = await r.json();
-    const roh = (j.content || []).filter(c => c.type === "text").map(c => c.text).join("");
-    ergebnis = JSON.parse(roh.replace(/```json|```/g, "").trim());
+    if (!r.ok) grund = "KI antwortet mit Fehler " + r.status;
+    else {
+      const j = await r.json();
+      ergebnis = jsonAus((j.content || []).filter(c => c.type === "text").map(c => c.text).join(""));
+      if (!ergebnis) grund = "Antwort der KI war nicht lesbar";
+    }
   } catch (e) {
-    console.error("lernrunde", e && e.message);
+    grund = "Zeitlimit oder Netzfehler (" + (e && e.name) + ")";
+  }
+  if (!ergebnis || !Array.isArray(ergebnis.vorschlaege)) {
+    // Frueher scheiterte die Runde still und wurde bei jedem Gespraech neu
+    // versucht. Jetzt steht der Grund unter "Status".
+    await fehlerLog("lernen", "Lernrunde nicht gelaufen: " + (grund || "keine Vorschlagsliste"));
     return null;
   }
-  if (!ergebnis || !Array.isArray(ergebnis.vorschlaege)) return null;
 
   // Vorschlaege durchnummerieren und ablegen (offen, bis Freigabe)
-  const offen = await jsonLesen("lern:vorschlaege", []);
-  let nr = offen.length ? Math.max(...offen.map(v => v.nr)) : 0;
-  const neue = ergebnis.vorschlaege.slice(0, 5).map(v => ({
+  let nr = Math.max(0, ...offen.map(v => v.nr), Number(await redis("GET", "lern:nr")) || 0);
+  const neue = ergebnis.vorschlaege.slice(0, 3).map(v => ({
     nr: ++nr,
     regel: String(v.regel || "").slice(0, 220),
     grund: String(v.grund || "").slice(0, 200),
+    beispiel: String(v.beispiel || "").slice(0, 180),
     art: v.art === "fachlich" ? "fachlich" : "stil",
-    d: new Date().toISOString().slice(0, 10)
+    d: new Date().toISOString().slice(0, 10),
+    gefragt: true
   })).filter(v => v.regel);
+  await redis("SET", "lern:nr", String(nr));
   await jsonSchreiben("lern:vorschlaege", [...offen, ...neue].slice(-30));
   await redis("SET", "lern:letzte", String(Date.now()));
   await redis("SET", "lern:zaehler", "0");
-  await jsonSchreiben("lern:kennzahlen", {
-    ...(ergebnis.kennzahlen || {}), d: new Date().toISOString().slice(0, 10)
-  });
+  const k = { ...(ergebnis.kennzahlen || {}), d: new Date().toISOString().slice(0, 10) };
+  await jsonSchreiben("lern:kennzahlen", k);
+  // Verlauf der Kennzahlen: so sieht man, ob es besser wird
+  const hist = await jsonLesen("lern:verlauf", []);
+  hist.push(k);
+  await jsonSchreiben("lern:verlauf", hist.slice(-12));
 
-  // Bericht an Dirk + Julian (nachts ueber die Warteschlange)
-  const k = ergebnis.kennzahlen || {};
+  // Bericht an die Technik (Julian). Ohne TECHNIK_NUMMERN an Dirk.
+  const vor = hist.length > 1 ? hist[hist.length - 2] : null;
+  const quote = x => x && x.gespraeche ? Math.round(100 * (x.mit_abschluss || 0) / x.gespraeche) + " %" : "?";
   const bericht =
     "Lernrunde: " + frisch.length + " Gespräche ausgewertet\n" +
-    "────────\n" +
-    "Mit Abschluss: " + (k.mit_abschluss ?? "?") + " · Abbrüche: " + (k.abbrueche ?? "?") +
-    " · Schleifen: " + (k.schleifen ?? "?") + " · Ungeduld: " + (k.ungeduld ?? "?") + "\n" +
-    (Array.isArray(ergebnis.gut) && ergebnis.gut.length
-      ? "Gut gelaufen: " + ergebnis.gut.slice(0, 3).join("; ") + "\n" : "") +
-    (neue.length
-      ? "\nVorschläge (nichts ist aktiv, bis du freigibst):\n" +
-        neue.map(v => v.nr + ". [" + v.art + "] " + v.regel + "\n    Grund: " + v.grund).join("\n") +
-        "\n\nFreigeben: \"Lernen " + neue[0].nr + " ok\" · Verwerfen: \"Lernen " + neue[0].nr + " nein\""
-      : "\nKeine neuen Vorschläge, läuft rund.");
-  await anInhaber(bericht);
+    "Mit Abschluss: " + quote(k) + (vor ? " (davor " + quote(vor) + ")" : "") +
+    " · abgesprungen: " + (k.abbrueche ?? "?") + " · zurückgeholt: " + (k.zurueckgeholt ?? "?") + "\n" +
+    (ergebnis.ausstieg ? "Häufigster Ausstieg: " + String(ergebnis.ausstieg).slice(0, 200) + "\n" : "") +
+    (Array.isArray(ergebnis.gut) && ergebnis.gut.length ? "Läuft gut: " + ergebnis.gut.slice(0, 2).join("; ").slice(0, 240) + "\n" : "") +
+    (neue.length ? neue.length + " Vorschlag/Vorschläge folgen. Nichts gilt ohne Freigabe." : "Keine neuen Vorschläge.");
+  await meldenOderAufheben(bericht, { kurz: "Auswertung der letzten Gespräche liegt vor", art: "technik" });
+  for (const v of neue) await vorschlagFragen(v);
   return { frisch: frisch.length, neue: neue.length };
 }
 
-async function anInhaber(text) {
-  if (istRuhezeit()) {
-    const liste = await jsonLesen("wartend", []);
-    liste.push({ text, bilder: [], ts: Date.now() });
-    await jsonSchreiben("wartend", liste.slice(-30));
-    return;
+// Ein Vorschlag als eigene Nachricht mit zwei Knoepfen. Ein Tipp genuegt.
+async function vorschlagFragen(v) {
+  const text = "💡 Lernvorschlag " + v.nr + " (" + (v.art === "fachlich" ? "fachlich" : "Stil") + ")\n" +
+    v.regel + "\nWarum: " + v.grund + (v.beispiel ? "\nKlingt dann so: „" + v.beispiel + "“" : "");
+  return meldenOderAufheben(text, {
+    kurz: "Lernvorschlag " + v.nr, art: "technik",
+    knoepfe: [{ id: "l:ok:" + v.nr, titel: "Übernehmen" }, { id: "l:nein:" + v.nr, titel: "Ablehnen" }]
+  });
+}
+
+// Vom Wecker: Lernrunde, wenn genug Neues da ist. Sie laeuft nicht mehr
+// mitten im Kundengespraech (dort scheiterte sie am Zeitlimit und lief
+// deshalb seit Ende September nicht mehr).
+export async function lernPflege() {
+  if (istRuhezeit()) return null;
+  // Aeltere Vorschlaege, die noch nie mit Knoepfen gefragt wurden: einmal nachholen
+  const offen = await jsonLesen("lern:vorschlaege", []);
+  // (Nur wenn Lernmeldungen an eine eigene Nummer gehen. Dirk soll nicht
+  // auf einen Schlag fuenf alte Vorschlaege bekommen.)
+  const ungefragt = (process.env.TECHNIK_NUMMERN || "").trim() ? offen.filter(v => !v.gefragt) : [];
+  if (ungefragt.length) {
+    for (const v of ungefragt) v.gefragt = true;
+    await jsonSchreiben("lern:vorschlaege", offen);
+    for (const v of ungefragt.slice(-5)) await vorschlagFragen(v);
+    return { nachgefragt: ungefragt.length };
   }
-  await zustellenAnInhaber(text, { kurz: "Auswertung der letzten Gespräche liegt vor" });
+  const z = Number(await redis("GET", "lern:zaehler")) || 0;
+  const letzte = Number(await redis("GET", "lern:letzte")) || 0;
+  const faellig = z >= LERN_INTERVALL || (z >= LERN_WOCHE_MIN && Date.now() - letzte > 7 * 86400000);
+  if (!faellig) return null;
+  // Hoechstens ein Versuch am Tag
+  const tag = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
+  if ((await redis("SET", "einmal:lernrunde:" + tag, "1", "NX", "EX", 2 * 86400)) !== "OK") return null;
+  return lernrunde();
 }
 
 // ---- Freigabe-Befehle (aus whatsapp.js aufgerufen) -----------------
@@ -206,7 +290,13 @@ export async function lernBefehl(t) {
     if (i < 0) return "Vorschlag " + nr + " kenne ich nicht. \"Lernen\" zeigt die offenen.";
     const v = offen.splice(i, 1)[0];
     await jsonSchreiben("lern:vorschlaege", offen);
-    if (!ja) return "Verworfen: " + v.regel;
+    if (!ja) {
+      // Abgelehntes merken, damit es nicht wieder vorgeschlagen wird
+      const weg = await jsonLesen("lern:abgelehnt", []);
+      weg.push({ regel: v.regel, d: new Date().toISOString().slice(0, 10) });
+      await jsonSchreiben("lern:abgelehnt", weg.slice(-30));
+      return "Verworfen: " + v.regel;
+    }
     const aktiv = await jsonLesen("lern:aktiv", []);
     if (aktiv.length >= MAX_GELERNT) {
       return "Es sind schon " + MAX_GELERNT + " Regeln aktiv. Erst eine entfernen (\"Vergiss gelernt N\") oder Julian bitten, sie in die Wissensbasis zu übernehmen.";
@@ -245,7 +335,7 @@ export async function lernBefehl(t) {
   if (/^(lernrunde|lernen jetzt)$/i.test(s)) {
     const r = await lernrunde();
     return r ? "Lernrunde gelaufen: " + r.frisch + " Gespräche, " + r.neue + " Vorschläge. Bericht kommt gleich."
-             : "Zu wenig neue Gespräche seit der letzten Runde (mindestens 3).";
+             : "Keine Lernrunde: zu wenig neue Gespräche seit der letzten (mindestens 3), oder die Auswertung ist gescheitert. \"Status\" zeigt den Grund.";
   }
 
   return null;

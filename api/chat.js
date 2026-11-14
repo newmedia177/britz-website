@@ -7,14 +7,15 @@
 // Optional:    CLAUDE_MODEL (Standard: claude-sonnet-5)
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
-import { gespraechAblegen, lernrunde, gelerntBlock } from "./_lernen.mjs";
-import { anfrageFortschreiben, fehlerZaehlen, uebergabeAnWhatsApp, weckerAufgaben } from "./_anfragen.mjs";
+import { gespraechAblegen, gelerntBlock } from "./_lernen.mjs";
+import { anfrageFortschreiben, fehlerZaehlen, uebergabeAnWhatsApp, weckerAufgaben, herzschlag,
+         gespraechSetzen, nachhakenAktiv } from "./_anfragen.mjs";
 import { buchungVerarbeiten, buchungKontext } from "./_buchung.mjs";
 import { spiegeln } from "./_mitlesen.mjs";
 import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
-         leiteBilderWeiter, RE_KONTAKT, belegteZeiten,
+         medienHochladen, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
-         kvaNotiz, fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN,
+         fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN, statPlus,
          gespraechMerken, offeneGespraecheMelden } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
@@ -32,6 +33,17 @@ const STROM_LEERLAUF_MS = Number(process.env.TEST_LEERLAUF_MS) || 20000;  // lae
 // geaendert werden kann.
 // Vorgabe Dirk (30.09.2026): Team-Formulierung, kein festes "heute oder morgen".
 export const RUECKMELDUNG = "Unser Team meldet sich in der Regel einen Tag später mit dem Kostenvoranschlag, je nach Aufwand kann es auch etwas länger dauern.";
+
+// Nachhaken im Web-Chat: Das Widget meldet, dass der Kunde nach einer
+// Frage von Alex gut eine Minute nichts geschrieben hat.
+const STUPS_KUNDE = "(Hinweis vom System, nicht vom Kunden: Der Kunde hat seit über einer Minute nicht geantwortet.)";
+const STUPS_AUFTRAG =
+  "\n\nDER KUNDE IST STILL GEWORDEN. Die letzte Zeile im Verlauf ist ein Hinweis des Systems, kein Text des Kunden. " +
+  "Schreib jetzt von dir aus EINE kurze Nachricht, höchstens zwei Sätze, so wie ein aufmerksamer Mitarbeiter am Empfang, der merkt, dass jemand zögert. " +
+  "Knüpf an den letzten Punkt an und mach den nächsten Schritt leichter als vorher: Ein Foto reicht erst mal, das Kennzeichen statt des Fahrzeugscheins, oder einfach vorbeikommen. " +
+  "Wiederhole deine letzte Frage nicht im Wortlaut. Schreib nicht \"Sind Sie noch da\", mach keinen Vorwurf und dräng nicht. " +
+  "Hat der Kunde noch keinen Rückweg genannt (Nummer oder E-Mail), biete an, einfach per WhatsApp weiterzumachen, dort geht nichts verloren, auch wenn dieses Fenster zu ist: 0151 6450 2368. " +
+  "Keine Preise, keine technischen Marker. Erwähne den Hinweis des Systems nicht.";
 
 const NICHT_ERREICHBAR =
   "Entschuldigung, ich bin gerade nicht erreichbar. " +
@@ -85,6 +97,18 @@ export default async function handler(req, res) {
   }
   if (!messages.length) messages.push({ role: "user", content: "(Foto vom Schaden)" });
 
+  // ---- Der Kunde ist still geworden (Widget meldet das einmal) ---------
+  // Ein Mensch am Empfang wuerde jetzt nicht warten, bis der Kunde geht.
+  // Er wuerde den naechsten Schritt leichter machen. Genau das.
+  const nachhaken = body.nachhaken === true && !images.length && messages.length >= 2 &&
+                    messages[messages.length - 1].role === "assistant";
+  if (nachhaken && !(await nachhakenAktiv().catch(() => true))) {
+    // Abgeschaltet ("Nachhaken aus"): leere Antwort, das Widget zeigt dann nichts.
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" });
+    res.write("data: [DONE]\n\n"); res.end(); return;
+  }
+  if (nachhaken) messages.push({ role: "user", content: STUPS_KUNDE });
+
   // Bilder an die letzte User-Nachricht hängen (Vision)
   if (images.length) {
     const last = messages[messages.length - 1];
@@ -127,7 +151,8 @@ export default async function handler(req, res) {
           cache_control: { type: "ephemeral" }
         }, {
           type: "text",
-          text: zeitKontext(await belegteZeiten().catch(() => [])) + (await buchungKontext()) + notesBlock
+          text: zeitKontext(await belegteZeiten().catch(() => [])) + (await buchungKontext()) + notesBlock +
+                (nachhaken ? STUPS_AUFTRAG : "")
         }],
         messages,
         stream: true
@@ -225,10 +250,29 @@ export default async function handler(req, res) {
   // verloren (Ursache im Fall Schaefer, September 2026). Der Kunde hat
   // seinen Text schon vollstaendig; er sieht nur die Tipp-Punkte etwas
   // laenger.
+  const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
+  // Der Verlauf, wie ihn das Widget kennt, plus diese Antwort
+  const verlaufWeb = [...raw.slice(-MAX_TURNS).map(m => ({ role: m && m.role === "assistant" ? "assistant" : "user", content: String((m && m.content) || "") })),
+                      { role: "assistant", content: answer }];
+
+  // Nachhaken: Es gibt keine neue Kundennachricht. Nur das Gespraech in
+  // der Akte ergaenzen und zaehlen, sonst nichts anstossen.
+  if (nachhaken) {
+    try {
+      const akten = await jsonLesen("anfragen", []);
+      const a = akten.filter(x => x.sitzung === sitzung && x.status !== "erledigt").pop();
+      if (a) await gespraechSetzen(a.nr, verlaufWeb);
+      await statPlus("nachgehaktWeb");
+    } catch (e) { console.error("nachhaken", e && e.message); }
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
   const lastUser = [...messages].reverse().find(m => m.role === "user");
   const frage = typeof (lastUser && lastUser.content) === "string"
-    ? lastUser.content : "";
-  const sitzung = String(body.sitzung || "").replace(/[^\w-]/g, "").slice(0, 40);
+    ? lastUser.content
+    : ((lastUser && Array.isArray(lastUser.content) && (lastUser.content.find(c => c.type === "text") || {}).text) || "");
 
   // Verbindliche Buchung pruefen. Passt sie nicht (voll, zu knapp,
   // Abholung ohne "Fertig"), geht die Korrektur noch im selben Strom an
@@ -249,37 +293,31 @@ export default async function handler(req, res) {
 
   await logGapIfNeeded(frage, answer);
 
-  // Zurueckgehaltene Nachtmeldungen zustellen (nur in der Buerozeit)
-  await warteschlangeZustellen().catch(() => {});
-  // Der Wecker laeuft im Hobby-Tarif nur einmal am Tag. Deshalb erledigt
-  // jede eingehende Nachricht die faelligen Aufgaben mit: Abbruch-
-  // Meldungen, Morgenbriefing, Wochenbericht. Alles ist gegen doppelte
-  // Ausfuehrung gesichert.
-  await offeneGespraecheMelden().catch(() => {});
-  await weckerAufgaben().catch(() => {});
-
-  // Gespraech anonymisiert ablegen; nach LERN_INTERVALL neuen
-  // Gespraechen laeuft die Lernrunde (Vorschlaege an Dirk, nichts
-  // wird ohne Freigabe uebernommen).
+  // Gespraech anonymisiert ablegen. Die Auswertung macht der Wecker
+  // (Vorschlaege gehen zur Freigabe, nichts wird von selbst uebernommen).
   try {
-    const faellig = await gespraechAblegen({
-      kennung: sitzung, kanal: "web",
-      verlauf: [...raw.slice(-MAX_TURNS).map(m => ({ role: m.role, content: m.content })),
-                { role: "assistant", content: answer }]
-    });
-    // faellige Lernrunde erledigt der Wecker (api/cron.js)
-    void faellig;
+    await gespraechAblegen({ kennung: sitzung, kanal: "web", verlauf: verlaufWeb });
   } catch (e) { console.error("lernen", e && e.message); }
 
   // Terminanfrage an den Inhaber melden
   const gemeldet = await meldeTermin({ antwort: answer, kanal: "web", thema: frage });
 
-  // Offenes Gespraech mitfuehren: Bricht der Kunde ab, meldet der
-  // Wecker (api/cron.js) das dem Inhaber samt allem, was bekannt ist.
+  // Fotos aus dem Web-Chat einmal an WhatsApp uebergeben. Gespeichert wird
+  // bei uns nur die Kennung, das Bild liegt bei Meta. So haengen die
+  // Fotos an der Akte und kommen mit der Karte bei Dirk an.
+  const mediaIds = [];
+  for (const b of images.slice(0, 4)) {
+    const id = await medienHochladen(b).catch(() => null);
+    if (id) mediaIds.push(id);
+  }
+
+  // Akte fortschreiben: Angaben, Fotos, Gespraech. Hier entscheidet sich
+  // auch, ob Dirk sofort eine Karte bekommt (Uebergabe, Dringlichkeit)
+  // oder sobald das Gespraech ruht.
   const akte = await anfrageFortschreiben({
-    sitzung, kanal: "web", antwort: answer,
-    kundentext: String(frage || ""), fotos: images.length
-  }).catch(() => null);
+    sitzung, kanal: "web", antwort: answer, alexText: markerRaus(answer),
+    kundentext: String(frage || ""), fotos: images.length, mediaIds, verlaufWeb
+  }).catch(e => { console.error("akte", e && e.message); return null; });
   // Nummer genannt -> Gespraech auf WhatsApp weiterfuehren (nur mit
   // genehmigter Meta-Vorlage; sonst bleibt es still und Dirk hat die
   // Nummer in der Akte).
@@ -294,25 +332,17 @@ export default async function handler(req, res) {
     tel: ((mKon && mKon[2]) || "").trim(),
     thema: String(frage || "").slice(0, 160),
     fotos: images.length,
-    // Sobald eine Terminanfrage raus ist oder Kontaktdaten weitergegeben
-    // wurden, ist nichts mehr offen.
-    abgeschlossen: !!gemeldet || !!mKon || !!(buchung && buchung.ok)
+    // Sobald eine Akte besteht (Fotos, Kontakt, Termin), kuemmert sich die
+    // Fallpflege. Hier bleiben nur Besucher ohne jede Angabe.
+    abgeschlossen: !!gemeldet || !!akte || !!(buchung && buchung.ok)
   }).catch(() => {});
 
-  // Schadensfotos aus dem Web-Chat an den Inhaber weiterleiten. Sie
-  // kommen hier ohne WhatsApp-Kennung an und werden deshalb einmal an
-  // WhatsApp uebergeben. Gespeichert wird bei uns nichts.
-  if (images.length) {
-    const mK = String(answer || "").match(RE_KONTAKT);
-    await leiteBilderWeiter({
-      kanal: "web",
-      base64Bilder: images,
-      name: ((mK && mK[1]) || "").trim(),
-      tel: ((mK && mK[2]) || "").trim(),
-      hinweis: [kvaNotiz(answer), String(frage).slice(0, 200)]
-                 .filter(Boolean).join("\n")
-    }).catch(e => console.error("fotos", e && e.message));
-  }
+  // Zum Schluss: Aufgehobenes zustellen und die faelligen Aufgaben
+  // (Karten, Nachhaken, Briefing). Alles gegen doppelte Ausfuehrung gesichert.
+  await warteschlangeZustellen().catch(() => {});
+  await offeneGespraecheMelden().catch(() => {});
+  await weckerAufgaben().catch(() => {});
+  await herzschlag(false).catch(() => {});
 
   res.write("data: [DONE]\n\n");
   res.end();

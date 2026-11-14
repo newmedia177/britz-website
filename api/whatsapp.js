@@ -13,19 +13,20 @@
 // Webhook-URL in der Meta-App: https://<eure-domain>/api/whatsapp
 
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
-import { gespraechAblegen, lernrunde, gelerntBlock, lernBefehl } from "./_lernen.mjs";
-import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben, chefUeberblick } from "./_anfragen.mjs";
+import { gespraechAblegen, gelerntBlock, lernBefehl, lernKennung } from "./_lernen.mjs";
+import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben, chefUeberblick, nachhakenAktiv,
+         chefAkteKontext, nummerImText, karteAktion, antwortAufKarte, entwurfSenden, akteHolenOderAnlegen,
+         akteFinden, akteAendern, gespraechAnhaengen, herzschlag } from "./_anfragen.mjs";
 import { buchungBefehl, buchungVerarbeiten, buchungKontext, RE_BUCHUNG } from "./_buchung.mjs";
 import { spiegeln, kundeInUebernahme, uebernahmeKunde, uebernahmeBefehl, anUebernehmer } from "./_mitlesen.mjs";
-import { akteHolenOderAnlegen } from "./_anfragen.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
-         RE_TERMIN_OK, icsAdresse, leiteBilderWeiter, belegteZeiten,
-         warteschlangeZustellen, kvaNotiz, RE_KONTAKT, RE_KVA, RE_TERMIN,
-         gespraechMerken, sendWA, offeneGespraecheMelden, inhaberNachliefern,
-         fetchMitZeit, fehlerLog,
+         RE_TERMIN_OK, icsAdresse, belegteZeiten,
+         warteschlangeZustellen, RE_KONTAKT, RE_KVA, RE_TERMIN,
+         sendWA, sendWAKnoepfe, sendWAGelesen, offeneGespraecheMelden, inhaberNachliefern,
+         berechtigteNummern, fetchMitZeit, fehlerLog,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
-         terminLoeschen, tagesBriefing,
+         terminLoeschen,
          speicherUrl, speicherToken } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
@@ -59,14 +60,62 @@ export default async function handler(req, res) {
   // gesendet ist. Deshalb erst ARBEITEN, dann 200 schicken. Meta wiederholt
   // den Aufruf bei Verzögerung – dagegen schützt die Dedupe-Prüfung unten.
   try {
-    await verarbeite(req);
+    await verarbeite(req, Date.now());
   } catch (e) {
     console.error("whatsapp handler", e);
   }
   res.status(200).json({ ok: true });   // Meta immer mit 200 bestätigen
 }
 
-async function verarbeite(req) {
+// ---- Mehrere Nachrichten sammeln -------------------------------------
+// Ein Kunde schickt selten EINE Nachricht: meist "Hallo", dann zwei Saetze,
+// dann fuenf Fotos. WhatsApp liefert jede einzeln. Frueher hat Alex auf
+// jede einzeln geantwortet (bei acht Fotos achtmal). Ein Mensch wartet
+// kurz, bis alles da ist, und antwortet dann einmal.
+//
+// So geht es: Jede Nachricht legt sich in eine Liste und wartet kurz. Kam
+// in der Zeit eine neuere, gibt die aeltere auf und die neuere nimmt alles
+// mit. Eine Sperre sorgt dafuer, dass nie zwei Antworten gleichzeitig an
+// denselben Kunden entstehen.
+const sammelnMs = bild => Number(bild
+  ? (process.env.WA_SAMMELN_BILD_MS ?? process.env.WA_SAMMELN_MS ?? 4500)
+  : (process.env.WA_SAMMELN_MS ?? 2500));
+const warte = ms => new Promise(r => setTimeout(r, ms));
+
+async function sammeln(from, eintrag) {
+  const kListe = "wa:ein:" + from, kLetzte = "wa:letzte:" + from, kSperre = "wa:sperre:" + from;
+  const abgelegt = await redis("RPUSH", kListe, JSON.stringify(eintrag));
+  if (abgelegt === undefined) return { liste: [eintrag], sperre: false };   // Speicher weg: lieber sofort antworten
+  await redis("EXPIRE", kListe, 300);
+  await redis("SET", kLetzte, eintrag.id, "EX", 300);
+
+  const ms = sammelnMs(!!eintrag.mediaId);
+  if (ms > 0) await warte(ms);
+  if ((await redis("GET", kLetzte)) !== eintrag.id) return null;            // eine neuere Nachricht uebernimmt
+
+  let sperre = false;
+  for (let i = 0; i < 20; i++) {
+    const s = await redis("SET", kSperre, eintrag.id, "NX", "EX", 55);
+    if (s === "OK") { sperre = true; break; }
+    if (s === undefined) break;
+    await warte(ms > 0 ? 1500 : 5);
+    if ((await redis("GET", kLetzte)) !== eintrag.id) return null;
+  }
+
+  const roh = await redis("LPOP", kListe, "50");
+  const liste = (Array.isArray(roh) ? roh : roh ? [roh] : [])
+    .map(x => { try { return JSON.parse(x); } catch (_) { return null; } }).filter(Boolean);
+  // Die eigene Nachricht muss dabei sein, ausser ein anderer Lauf hat sie
+  // schon beantwortet.
+  if (!liste.some(e => e.id === eintrag.id) && !(await redis("GET", "wa:erl:" + eintrag.id))) liste.push(eintrag);
+  if (!liste.length) { if (sperre) await redis("DEL", kSperre); return null; }
+  for (const e of liste) await redis("SET", "wa:erl:" + e.id, "1", "EX", 900);
+  return { liste, sperre };
+}
+
+const RE_AN_KUNDE = /\[\[AN_KUNDE\|\s*(\d{1,4})\s*\|([^\]]{5,1500})\]\]/;
+
+async function verarbeite(req, start) {
   const value = req.body?.entry?.[0]?.changes?.[0]?.value;
   const msg = value?.messages?.[0];
 
@@ -93,20 +142,19 @@ async function verarbeite(req) {
 
   // ---- Eingehende Nachricht lesen (Text oder Bild) ------------
   let text = "";
-  const images = [];
-  const mediaIds = [];        // fuer die Weiterleitung an den Inhaber
+  let mediaId = "";
+  let knopf = "";             // Kennung eines angetippten Knopfs
   if (msg.type === "text") {
     text = (msg.text?.body || "").slice(0, 4000);
   } else if (msg.type === "image") {
-    text = (msg.image?.caption || "(Foto vom Schaden)").slice(0, 4000);
-    const img = await fetchWhatsAppMedia(msg.image?.id);
-    if (img) images.push(img);
-    if (msg.image?.id) mediaIds.push(msg.image.id);
+    text = (msg.image?.caption || "").slice(0, 4000);
+    mediaId = msg.image?.id || "";
   } else if (msg.type === "button") {
     // Tipp auf einen Knopf unter einer Vorlage, z. B. "Alles anzeigen"
     text = (msg.button?.text || msg.button?.payload || "").slice(0, 200);
   } else if (msg.type === "interactive") {
     text = (msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "").slice(0, 200);
+    knopf = String(msg.interactive?.button_reply?.id || "");
   } else {
     await sendWhatsApp(from,
       "Das Format kann ich hier leider nicht öffnen. Schicken Sie mir " +
@@ -115,233 +163,334 @@ async function verarbeite(req) {
     return;
   }
 
-  // ---- Inhaber: einmal am Tag kurz begrüßen und Stand melden -----
-  if (isOwner(from)) {
-    // Dirk schreibt oder tippt "Alles anzeigen": Das 24-Stunden-Fenster
-    // ist jetzt offen, also kommt alles Liegengebliebene sofort.
-    const nachgeliefert = await inhaberNachliefern(from).catch(() => 0);
-    if (/^(alles anzeigen|anzeigen|zeig alles)$/i.test(String(text).trim())) {
-      if (!nachgeliefert) await sendWhatsApp(from, "Es liegt nichts mehr an, du bist auf dem neuesten Stand.");
+  if (isOwner(from)) return verarbeiteInhaber({ from, text, mediaId, knopf, bezug: msg.context?.id || "", start });
+  return verarbeiteKunde({ from, msg, text, mediaId, profilName, start });
+}
+
+// ======================================================================
+// Dirk (oder Julian) schreibt
+// ======================================================================
+async function verarbeiteInhaber({ from, text, mediaId, knopf, bezug, start }) {
+  // Dirk schreibt oder tippt: Das 24-Stunden-Fenster ist jetzt offen,
+  // also kommt alles Liegengebliebene sofort.
+  const nachgeliefert = await inhaberNachliefern(from).catch(() => 0);
+  const t = String(text || "").trim();
+  if (/^(alles anzeigen|anzeigen|zeig alles)$/i.test(t)) {
+    if (!nachgeliefert) await sendWhatsApp(from, "Es liegt nichts mehr an, du bist auf dem neuesten Stand.");
+    return;
+  }
+
+  // ---- Knopf unter einer Karte ---------------------------------------
+  let m = knopf.match(/^a:(anruf|vorbei|details|erledigt):(\d+)$/);
+  if (m) {
+    const antwort = await karteAktion(from, m[1], Number(m[2]));
+    if (antwort) await sendWhatsApp(from, antwort);
+    return;
+  }
+  m = knopf.match(/^l:(ok|nein):(\d+)$/);
+  if (m) {
+    await sendWhatsApp(from, (await lernBefehl("Lernen " + m[2] + " " + m[1])) || "Diesen Vorschlag gibt es nicht mehr.");
+    return;
+  }
+
+  // ---- Entwurf an einen Kunden bestaetigen oder verwerfen --------------
+  const entwurf = await jsonLesen("entwurf:" + from, null);
+  if (entwurf) {
+    if (knopf === "e:senden" || /^(ja|senden|schick(en)?|passt|ok|raus damit)\.?$/i.test(t)) {
+      await redis("DEL", "entwurf:" + from);
+      await sendWhatsApp(from, await entwurfSenden(from, entwurf));
       return;
     }
+    if (knopf === "e:weg" || /^(nein|verwerfen|weg|abbrechen|stopp?)\.?$/i.test(t)) {
+      await redis("DEL", "entwurf:" + from);
+      await sendWhatsApp(from, "Verworfen, es ist nichts rausgegangen.");
+      return;
+    }
+    // Alles andere ist eine Aenderung oder ein neues Thema: Entwurf faellt weg.
+    await redis("DEL", "entwurf:" + from);
+  } else if (knopf === "e:senden" || knopf === "e:weg") {
+    await sendWhatsApp(from, "Der Entwurf ist nicht mehr da. Sag mir einfach noch einmal, was der Kunde bekommen soll.");
+    return;
+  }
 
-    // Der alte Tagesgruss (tagesBriefing) ist abgeschaltet: Er las noch die
-    // Terminliste von vor der Direktbuchung und meldete deshalb "nichts
-    // Offenes", obwohl Termine gebucht waren. Den Ueberblick liefert jetzt
-    // allein das Morgenbriefing (weckerAufgaben).
+  // ---- Antwort direkt auf eine Karte: welche Anfrage ist gemeint? -------
+  let bezugNr = 0;
+  if (bezug) bezugNr = Number(await redis("GET", "karte:" + bezug)) || 0;
+  if (bezugNr && /^(übernehme|uebernehme|übernehmen|uebernehmen)\.?$/i.test(t)) text = "Übernehme " + bezugNr;
 
-    // ---- Uebernahme / Mitlesen ------------------------------------
-    const ueb = await uebernahmeBefehl(from, text);
-    if (ueb) { await sendWhatsApp(from, ueb); return; }
+  // ---- Uebernahme / Mitlesen ------------------------------------
+  const ueb = await uebernahmeBefehl(from, text);
+  if (ueb) { await sendWhatsApp(from, ueb); return; }
 
-    // ---- Lern-Modus: nur Inhaber dürfen Anweisungen geben --------
-    const handled = await handleOwnerCommand(from, text);
-    if (handled) return;
+  if (bezugNr && !(await uebernahmeKunde(from))) {
+    const antwort = await antwortAufKarte(from, bezugNr, t);
+    if (antwort !== null) { if (antwort) await sendWhatsApp(from, antwort); return; }
+  }
 
-    // Laeuft eine Uebernahme, geht alles, was kein Befehl war, 1:1 an
-    // den Kunden. Im Verlauf des Kunden landet es als Werkstatt-Nachricht,
-    // damit Alex nach "Fertig" weiss, was besprochen wurde.
-    const kundeUeb = await uebernahmeKunde(from);
-    if (kundeUeb && text) {
-      const ok = await sendWA(kundeUeb, text);
-      const hist = await memGet(kundeUeb);
-      await memSet(kundeUeb, anhaengen(hist, { role: "assistant", content: "[Werkstatt persönlich] " + text }));
-      if (!ok) await sendWhatsApp(from, "⚠ Nicht zugestellt – der Kunde hat seit über 24 Std. nicht geschrieben.");
+  // ---- Befehle ----------------------------------------------------
+  const handled = await handleOwnerCommand(from, text);
+  if (handled) return;
+
+  // Laeuft eine Uebernahme, geht alles, was kein Befehl war, 1:1 an
+  // den Kunden. Im Verlauf des Kunden landet es als Werkstatt-Nachricht,
+  // damit Alex nach "Fertig" weiss, was besprochen wurde.
+  const kundeUeb = await uebernahmeKunde(from);
+  if (kundeUeb && text) {
+    const ok = await sendWA(kundeUeb, text);
+    const hist = await memGet(kundeUeb);
+    await memSet(kundeUeb, anhaengen(hist, { role: "assistant", content: "[Werkstatt persönlich] " + text }));
+    const akteU = await akteHolenOderAnlegen({ kanal: "whatsapp", kundeNr: kundeUeb, sitzung: "wa:" + kundeUeb, status: "gespraech" }).catch(() => null);
+    if (akteU && ok) await gespraechAnhaengen(akteU.nr, "D", text).catch(() => {});
+    if (!ok) await sendWhatsApp(from, "⚠ Nicht zugestellt – der Kunde hat seit über 24 Std. nicht geschrieben.");
+    return;
+  }
+
+  // ---- Freie Frage oder freier Auftrag: Alex als Assistent ---------------
+  const history = await memGet(from);
+  const messages = anhaengen(history, { role: "user", content: text || "(Foto)" });
+  if (mediaId) {
+    const img = await fetchWhatsAppMedia(mediaId);
+    if (img) messages[messages.length - 1].content = [
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: img } },
+      { type: "text", text: text || "(Foto)" }];
+  }
+  const merk = messages.map(mm => ({ role: mm.role, content: typeof mm.content === "string" ? mm.content : (text || "(Foto)") }));
+  await memSet(from, merk);
+
+  const stand = await chefUeberblick().catch(() => "STAND NICHT LESBAR: sag Dirk, er soll \"Anfragen\" schreiben.");
+  const gemeint = bezugNr || nummerImText(t);
+  const einzel = gemeint ? await chefAkteKontext(gemeint).catch(() => "") : "";
+  const chefBlock =
+    "\n\n=== DU SPRICHST MIT DIRK, DEM INHABER ===\n" +
+    "Das ist kein Kunde, sondern der Chef. Du bist sein Assistent, ihr duzt euch. " +
+    "Knapp, sachlich, kollegial, keine Verkaufsfloskeln, keine Begrüßung in jeder Nachricht. " +
+    "Dirk hat wenig Zeit und will keine Technik: Antworte in ein bis drei kurzen Sätzen. " +
+    "Gegenüber KUNDEN bleibt es immer beim Sie.\n\n" +
+    stand + einzel + "\n\n" +
+    "REGELN FÜR DEINE ANTWORT:\n" +
+    "• Antworte zum Stand NUR aus den Daten oben. Steht dort eine Anfrage, existiert sie. " +
+    "Sag nie \"nichts Offenes\", wenn oben Anfragen stehen, und erfinde keine.\n" +
+    "• Fragt Dirk etwas zu einem Kunden (was will er, was für ein Auto, was hat er geschrieben), antworte direkt aus den Daten und dem Wortlaut oben, statt ihn auf Befehle zu verweisen.\n" +
+    "• Sag nie, dass Julian etwas prüfen muss oder dass du etwas nicht siehst, wenn es oben steht.\n" +
+    "• Fotos kannst du hier nicht einfügen. Die schickt \"Fotos 3\" oder \"Anfrage 3\". Fotos von vor dem 13.11. sind nicht mehr abrufbar.\n" +
+    "• Denk mit: Weise kurz auf das Dringendste hin (DRINGEND, lange Wartende, WhatsApp-Fenster, das bald schließt).\n\n" +
+    "KUNDEN ETWAS SCHREIBEN LASSEN:\n" +
+    "Bittet Dirk dich, einem Kunden etwas zu schreiben (ein Angebot, eine Rückfrage, eine Entschuldigung), dann formuliere die Nachricht fertig aus: " +
+    "per Sie, freundlich, zwei bis vier kurze Sätze, kein Ausrufezeichen, beginnend mit \"Guten Tag, hier ist Alex von der Autolackiererei in Britz.\" " +
+    "Preise und Zusagen NUR, wenn Dirk sie gerade genannt hat, und genau so. Erfinde nichts dazu. " +
+    "Schreib dann eine kurze Zeile an Dirk und hänge ans Ende GENAU EINE Zeile an: [[AN_KUNDE|Nummer der Anfrage|fertiger Text an den Kunden]]. " +
+    "Die Nachricht geht erst raus, wenn Dirk bestätigt, das macht das System. Ist nicht klar, welcher Kunde gemeint ist, frag nach statt zu raten.\n\n" +
+    "BEFEHLE, DIE ES WIRKLICH GIBT (nur nennen, wenn es hilft):\n" +
+    "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Gespräch 3\" (Wortlaut) · \"Alle Details\" · \"Angebot 3: [Preis], [was gemacht wird]\" · " +
+    "\"Erledigt 3\" (auch mehrere: \"Erledigt 2 3 4\") · \"Nachfassen 3\" · \"Vorbeikommen 3\" · \"Anruf 3\" · " +
+    "\"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · \"Fertig 3\" (Auto fertig) · \"Merk dir: …\" · \"Status\" · \"Hilfe\".\n" +
+    "Erfinde keine weiteren Befehle oder Funktionen. Kannst du etwas nicht, sag es klar.\n" +
+    "Website-Kunden und WhatsApp-Kunden, die über 24 Stunden nicht geschrieben haben, kannst du nicht anschreiben: Rufnummer nennen.\n" +
+    "Setze im Gespräch mit Dirk NIEMALS Kundenmarker wie [[KONTAKT|…]], [[KVA|…]] oder [[BUCHUNG|…]].";
+
+  const r = await kiAnfrage({
+    messages, max: 900,
+    zusatz: zeitKontext(await belegteZeiten().catch(() => [])) + chefBlock +
+      "\n\nKanal: WhatsApp. Kurz wie im Chat, keine Aufzählungen, keine Überschriften." +
+      (await ownerNotesBlock())
+  });
+  if (!r.ok) {
+    await fehlerZaehlen("modell", "WhatsApp, Inhaber: KI nicht erreichbar (" + r.grund + ")", "Bin gerade nicht erreichbar …").catch(() => {});
+    await sendWhatsApp(from, "Ich bin gerade nicht erreichbar. Die Befehle gehen trotzdem, zum Beispiel \"Anfragen\" oder \"Hilfe\".");
+    return;
+  }
+  const roh = r.text;
+  const mE = roh.match(RE_AN_KUNDE);
+  let reply = saeubern(markerRaus(roh), true).trim();
+
+  if (mE) {
+    const nr = Number(mE[1]);
+    const kundenText = saeubern(mE[2].trim(), true).trim();
+    const akte = await akteFinden(nr).catch(() => null);
+    if (!akte) {
+      reply = "Anfrage " + nr + " finde ich nicht. Welche Nummer meinst du? \"Anfragen\" zeigt die offenen.";
+    } else {
+      await jsonSchreiben("entwurf:" + from, { nr, text: kundenText, ts: Date.now() }, 3600);
+      const vorschau = "An Nr. " + nr + " · " + (akte.name || "Kunde") + " geht:\n\n„" + kundenText + "“";
+      const ok = await sendWAKnoepfe(from, vorschau.slice(0, 1000), [{ id: "e:senden", titel: "Senden" }, { id: "e:weg", titel: "Verwerfen" }]);
+      if (!ok) await sendWhatsApp(from, vorschau + "\n\nSenden? Antworte mit Ja oder Nein.");
+      await memSet(from, [...merk, { role: "assistant", content: "Entwurf an Nr. " + nr + ": " + kundenText }].slice(-MAX_TURNS));
       return;
     }
   }
+  if (!reply) reply = "Das habe ich gerade nicht hinbekommen. Schreib es mir bitte noch einmal, oder schick \"Hilfe\" für alle Befehle.";
+  await sendeMenschlich(from, reply);
+  await memSet(from, [...merk, { role: "assistant", content: reply }].slice(-MAX_TURNS));
+  await nacharbeit(start);
+}
 
+// Eine Anfrage an die KI mit dem grossen Wissensblock (im Zwischenspeicher).
+// Rueckgabe: { ok, text, data, grund }
+async function kiAnfrage({ messages, zusatz, max = 900 }) {
+  let r;
+  try {
+    r = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
+        max_tokens: max,
+        system: [{
+          type: "text",
+          text: SYSTEM + "\n\n<wissensbasis>\n" + KNOWLEDGE + "\n</wissensbasis>",
+          cache_control: { type: "ephemeral" }
+        }, { type: "text", text: zusatz }],
+        messages
+      })
+    }, 25000);
+  } catch (e) {
+    return { ok: false, grund: "Zeitlimit 25 s", text: "" };
+  }
+  if (!r.ok) {
+    console.error("Anthropic", r.status, await r.text().catch(() => ""));
+    return { ok: false, grund: r.status ? "Fehler " + r.status : "Zeitlimit 25 s", text: "" };
+  }
+  const data = await r.json();
+  let text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+  // Reisst die Antwort am Laengenlimit ab, endet sie mitten im Satz
+  // ("... ein, zwei Fotos vom"). Dann den angefangenen Satz lieber
+  // wegschneiden als ihn halb zu verschicken.
+  if (data.stop_reason === "max_tokens" && text) {
+    const bisSatzende = text.replace(/\s+\S*$/, "");
+    const m = bisSatzende.match(/^[\s\S]*[.!?…]/);
+    if (m && m[0].trim().length > 20) text = m[0].trim();
+  }
+  return { ok: true, text, data };
+}
+
+// Was nach jeder Antwort mitlaeuft: Aufgehobenes zustellen, Fallpflege,
+// Briefing. Kommt NACH der Antwort an den Kunden, damit niemand darauf
+// warten muss. Alles ist gegen doppelte Ausfuehrung gesichert.
+async function nacharbeit(start) {
+  await warteschlangeZustellen().catch(() => {});
+  await offeneGespraecheMelden().catch(() => {});
+  // Die Funktion darf 60 Sekunden laufen. KI-Anfragen der Fallpflege
+  // beginnen nur, wenn seit dem Eingang weniger als 30 Sekunden vergangen sind.
+  await weckerAufgaben({ bis: (start || Date.now()) + 30000 }).catch(() => {});
+  await herzschlag(false).catch(() => {});
+}
+
+// ======================================================================
+// Ein Kunde schreibt
+// ======================================================================
+async function verarbeiteKunde({ from, msg, text, mediaId, profilName, start }) {
   // ---- Kunde in einer Uebernahme: Alex schweigt, Dirk liest direkt ----
-  if (!isOwner(from)) {
-    const ueb = await kundeInUebernahme(from);
-    if (ueb) {
-      await anUebernehmer(ueb, { text, mediaIds });
-      const hist = await memGet(from);
-      // WhatsApp-Verlauf muss mit "user" beginnen und abwechseln: wir haengen an
-      await memSet(from, anhaengen(hist, { role: "user", content: text || "(Foto)" }));
-      return;
-    }
+  const ueb = await kundeInUebernahme(from);
+  if (ueb) {
+    await anUebernehmer(ueb, { text, mediaIds: mediaId ? [mediaId] : [] });
+    const hist = await memGet(from);
+    // WhatsApp-Verlauf muss mit "user" beginnen und abwechseln: wir haengen an
+    await memSet(from, anhaengen(hist, { role: "user", content: text || "(Foto)" }));
+    await gespraechAnhaengen(ueb.nr, "K", text || "(Foto)").catch(() => {});
+    if (mediaId) await akteAendern(ueb.nr, a => { a.medien = [...(a.medien || []), mediaId].slice(-20); a.fotos = (a.fotos || 0) + 1; a.letzterKontakt = Date.now(); }).catch(() => {});
+    return;
   }
+
+  // Sofort: blaue Haken und "schreibt ...". Laeuft nebenher.
+  const gelesen = sendWAGelesen(msg.id).catch(() => false);
+
+  // ---- Kurz sammeln: mehrere Nachrichten, eine Antwort -------------------
+  const gesammelt = await sammeln(from, { id: msg.id, text, mediaId });
+  if (!gesammelt) { await gelesen; return; }
+  try {
+    await beantworteKunde({ from, eintraege: gesammelt.liste, profilName, start });
+  } finally {
+    if (gesammelt.sperre) await redis("DEL", "wa:sperre:" + from);
+    await gelesen;
+  }
+}
+
+async function beantworteKunde({ from, eintraege, profilName, start }) {
+  const mediaIds = eintraege.map(e => e.mediaId).filter(Boolean);
+  const texte = eintraege.map(e => String(e.text || "").trim()).filter(Boolean);
+  const fotoHinweis = mediaIds.length > 1 ? "(" + mediaIds.length + " Fotos vom Schaden)" : "(Foto vom Schaden)";
+  const text = (texte.join("\n") || (mediaIds.length ? fotoHinweis : "")).slice(0, 4000);
+  if (!text && !mediaIds.length) return;
+
+  // Bilder laden (fuer die Einschaetzung reichen vier, gezaehlt werden alle)
+  const images = (await Promise.all(mediaIds.slice(0, 4).map(id => fetchWhatsAppMedia(id)))).filter(Boolean);
+
+  // Jede WhatsApp-Unterhaltung hat von der ersten Nachricht an eine Akte
+  // (reine Unterhaltung = Status "gespraech", zaehlt nicht als Anfrage).
+  // So steht das Gespraech vollstaendig drin und Dirk kann uebernehmen.
+  await akteHolenOderAnlegen({ kanal: "whatsapp", kundeNr: from, sitzung: "wa:" + from, status: "gespraech" }).catch(() => null);
 
   // ---- Gesprächsverlauf laden (optional, via Upstash) ----------
   const history = await memGet(from);
   const messages = anhaengen(history, { role: "user", content: text });
-
-  // Bilder an die letzte Nachricht hängen
+  const merk = messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : text }));
   if (images.length) {
     const last = messages[messages.length - 1];
+    const bisher = typeof last.content === "string" ? last.content : text;
     last.content = [
-      ...images.map(b64 => ({
-        type: "image",
-        source: { type: "base64", media_type: "image/jpeg", data: b64 }
-      })),
-      { type: "text", text }
+      ...images.map(b64 => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } })),
+      { type: "text", text: bisher + (mediaIds.length > images.length ? "\n(Insgesamt " + mediaIds.length + " Fotos, du siehst die ersten " + images.length + ".)" : "") }
     ];
   }
-
   // Verlauf sofort sichern. Faellt weiter unten etwas aus, ist die
   // Kundennachricht trotzdem im Gedaechtnis.
-  await memSet(from, messages.map(m => ({
-    role: m.role,
-    content: typeof m.content === "string" ? m.content : text
-  })));
+  await memSet(from, merk);
 
-  const notesBlock = (await ownerNotesBlock()) + (await gelerntBlock()) +
-                     (isOwner(from) ? "" : await akteKontext(from).catch(() => ""));
+  const zusatz =
+    // Derselbe Zeit- und Terminkontext wie im Web-Chat. Ohne ihn kennt
+    // Alex weder das heutige Datum noch die buchbaren Fenster.
+    zeitKontext(await belegteZeiten().catch(() => [])) + (await buchungKontext()) +
+    "\n\nDieser Kunde schreibt über WhatsApp von der Nummer +" + from +
+    ". Frag deshalb NICHT nach der Telefonnummer, du hast sie bereits. " +
+    "Bestätige sie höchstens kurz (\"Ich nehme die Nummer, von der Sie schreiben\").\n" +
+    "Nach dem Namen fragst du dagegen ganz normal, sobald du ihn für " +
+    "einen Termin brauchst. Sprich den Kunden NIE mit einem Namen an, " +
+    "den er dir nicht selbst genannt hat." +
+    "\n\nKanal: WhatsApp. Schreibe wie eine echte Person im Chat: " +
+    "höchstens zwei bis drei kurze Sätze, keine Aufzählungen, " +
+    "keine Zwischenüberschriften, kein Fließtext-Block." +
+    (eintraege.length > 1
+      ? "\n\nDer Kunde hat gerade " + eintraege.length + " Nachrichten hintereinander geschickt" +
+        (mediaIds.length ? " (darunter " + mediaIds.length + " Foto" + (mediaIds.length > 1 ? "s" : "") + ")" : "") +
+        ". Antworte EINMAL auf alles zusammen, nicht auf jede Nachricht einzeln."
+      : "") +
+    // Kennzeichnung nach EU AI Act, Art. 50: Auf WhatsApp gibt es
+    // keine Kopfzeile, deshalb einmalig im ersten Satz - nicht als
+    // Warnhinweis, sondern als das, was es ist: schnelle Vorarbeit,
+    // entschieden wird in der Werkstatt.
+    (messages.length > 2 ? "" :
+    "\n\nDies ist die ERSTE Nachricht dieses Kunden. Ordne dich " +
+    "deshalb einmal kurz und beiläufig ein — in EINEM Halbsatz, " +
+    "mitten im Gespräch, nie als Hinweisblock und nie entschuldigend. " +
+    "Der Gedanke: Du bist der KI-Assistent des Betriebs, machst die " +
+    "Vorarbeit rund um die Uhr, und Einschätzung wie Termin gehen " +
+    "anschließend an die Werkstatt, die entscheidet. Beispiel: " +
+    "\"Hier ist Alex, der KI-Assistent der Autolackiererei in Britz — " +
+    "ich mache die Vorarbeit, entschieden wird dann in der Werkstatt. " +
+    "Schicken Sie mir gern ein Foto vom Schaden.\" Formuliere es " +
+    "selbst, nicht wörtlich abschreiben. Danach normal weiter und " +
+    "nie wiederholen.") +
+    (await ownerNotesBlock()) + (await gelerntBlock()) + (await akteKontext(from).catch(() => ""));
 
-  // Schreibt der Inhaber, arbeitet Alex als sein Assistent statt als
-  // Kundenberater. Dafuer bekommt er den Stand der offenen Anfragen mit.
-  const chef = isOwner(from);
-  let chefBlock = "";
-  if (chef) {
-    // Echter Stand aus den Anfragen-Akten und Buchungen. Frueher stand hier
-    // die alte Terminliste, deshalb sagte Alex "nichts Offenes", obwohl
-    // neun Anfragen warteten.
-    const stand = await chefUeberblick().catch(() => "STAND NICHT LESBAR: sag Dirk, er soll \"Anfragen\" schreiben.");
-    chefBlock =
-      "\n\n=== DU SPRICHST MIT DIRK, DEM INHABER ===\n" +
-      "Das ist kein Kunde, sondern der Chef. Du bist sein Assistent, ihr duzt euch. " +
-      "Knapp, sachlich, kollegial, keine Verkaufsfloskeln, keine Begrüßung in jeder Nachricht. " +
-      "Gegenüber KUNDEN bleibt es immer beim Sie.\n\n" +
-      stand + "\n\n" +
-      "REGELN FÜR DEINE ANTWORT:\n" +
-      "• Antworte zum Stand NUR aus der Liste oben. Steht dort eine Anfrage, existiert sie. " +
-      "Sag nie \"nichts Offenes\", wenn oben Anfragen stehen, und erfinde keine.\n" +
-      "• Sag nie, dass Julian etwas prüfen muss oder dass du etwas nicht siehst, wenn es oben steht.\n" +
-      "• Fragt er nach Details, Fotos oder Nummern, nenne ihm den Befehl, der sie sofort schickt: " +
-      "\"Anfrage 3\" (alles zu Nr. 3 samt Fotos), \"Fotos 3\", \"Alle Details\" (alle offenen samt Fotos). " +
-      "Die Nummern der Kunden stehen oben, die darfst du ihm direkt nennen.\n" +
-      "• Fotos, die vor dem 13.11. kamen, sind nicht mehr abrufbar. Dann ehrlich sagen und die Nummer zum Nachfragen nennen.\n\n" +
-      "BEFEHLE, DIE ES WIRKLICH GIBT:\n" +
-      "\"Anfragen\" · \"Anfrage 3\" · \"Fotos 3\" · \"Alle Details\" · \"Angebot 3: [Preis], [was gemacht wird]\" · " +
-      "\"Erledigt 3\" · \"Nachfassen 3\" · \"Vorbeikommen 3\" (Kunde wird zur kostenlosen Begutachtung eingeladen, mit freien Zeiten) · " +
-      "\"Übernehme 3\" (selbst mit dem Kunden schreiben) · \"Termine\" · " +
-      "\"Fertig 3\" (Auto fertig) · \"Merk dir: …\" · \"Protokoll\" · \"Status\" · \"Hilfe\".\n" +
-      "Erfinde keine weiteren Befehle oder Funktionen. Kannst du etwas nicht, sag es klar und nenne den passenden Befehl.\n" +
-      "Website-Kunden kannst du nicht anschreiben, dann die Rufnummer nennen. WhatsApp-Kunden, die über 24 Stunden " +
-      "nicht geschrieben haben, auch nicht: Rufnummer nennen.\n" +
-      "Denk mit: Weise auf Anfragen hin, die schon lange warten. Kurz.\n" +
-      "Setze im Gespräch mit Dirk NIEMALS Marker wie [[KONTAKT|…]] oder [[BUCHUNG|…]]. Die gelten nur für Kunden.";
-  }
-
-  // ---- Alex antworten lassen ------------------------------------
-  // Zeit- und Buchungskontext einmal berechnen (auch fuer den zweiten Versuch)
-  const kontextZeitBuchung = zeitKontext(await belegteZeiten().catch(() => [])) +
-    (chef ? "" : await buchungKontext());
-  const kiFragen = (zusatz) => fetchMitZeit("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
-      max_tokens: 900,
-      system: [{
-        type: "text",
-        text: SYSTEM + "\n\n<wissensbasis>\n" + KNOWLEDGE + "\n</wissensbasis>",
-        cache_control: { type: "ephemeral" }
-      }, {
-        type: "text",
-        // Derselbe Zeit- und Terminkontext wie im Web-Chat. Ohne ihn
-        // kennt Alex weder das heutige Datum noch die buchbaren Fenster
-        // und versteht Angaben wie "morgen 11 Uhr" nicht.
-        text: kontextZeitBuchung + chefBlock +
-          (chef ? "" :
-          "\n\nDieser Kunde schreibt über WhatsApp von der Nummer +" + from +
-          ". Frag deshalb NICHT nach der Telefonnummer, du hast sie bereits. " +
-          "Bestätige sie höchstens kurz (\"Ich nehme die Nummer, von der Sie " +
-          "schreiben\").\n" +
-          "Nach dem Namen fragst du dagegen ganz normal, sobald du ihn für " +
-          "einen Termin brauchst. Sprich den Kunden NIE mit einem Namen an, " +
-          "den er dir nicht selbst genannt hat.") +
-          "\n\nKanal: WhatsApp. Schreibe wie eine echte Person im Chat: " +
-          "höchstens zwei bis drei kurze Sätze, keine Aufzählungen, " +
-          "keine Zwischenüberschriften, kein Fließtext-Block." +
-          // Kennzeichnung nach EU AI Act, Art. 50: Auf WhatsApp gibt es
-          // keine Kopfzeile, deshalb einmalig im ersten Satz - nicht als
-          // Warnhinweis, sondern als das, was es ist: schnelle Vorarbeit,
-          // entschieden wird in der Werkstatt.
-          (chef || messages.length > 2 ? "" :
-          "\n\nDies ist die ERSTE Nachricht dieses Kunden. Ordne dich " +
-          "deshalb einmal kurz und beiläufig ein — in EINEM Halbsatz, " +
-          "mitten im Gespräch, nie als Hinweisblock und nie entschuldigend. " +
-          "Der Gedanke: Du bist der KI-Assistent des Betriebs, machst die " +
-          "Vorarbeit rund um die Uhr, und Einschätzung wie Termin gehen " +
-          "anschließend an die Werkstatt, die entscheidet. Beispiel: " +
-          "\"Hier ist Alex, der KI-Assistent der Autolackiererei in Britz — " +
-          "ich mache die Vorarbeit, entschieden wird dann in der Werkstatt. " +
-          "Schicken Sie mir gern ein Foto vom Schaden.\" Formuliere es " +
-          "selbst, nicht wörtlich abschreiben. Danach normal weiter und " +
-          "nie wiederholen.") + notesBlock + (zusatz || "")
-      }],
-      messages
-    })
-  }, 25000);
-
-  let r;
-  try { r = await kiFragen(); }
-  catch (e) { r = { ok: false, status: 0, text: async () => String(e && e.name) }; }
-
+  const r = await kiAnfrage({ messages, zusatz });
   if (!r.ok) {
-    const fehlerText = await r.text().catch(() => "");
-    console.error("Anthropic", r.status, fehlerText);
-    await fehlerZaehlen("modell", "WhatsApp, " + (chef ? "Inhaber" : "Kunde") + ": KI nicht erreichbar (" +
-      (r.status ? "Fehler " + r.status : "Zeitlimit 25 s") + ")",
+    await fehlerZaehlen("modell", "WhatsApp, Kunde: KI nicht erreichbar (" + r.grund + ")",
       "Entschuldigung, ich bin gerade nicht erreichbar. Rufen Sie uns gern direkt an …").catch(() => {});
     await sendWhatsApp(from,
       "Entschuldigung, ich bin gerade nicht erreichbar. Rufen Sie uns " +
       "gern direkt an: 030 607 97 930 (Mo–Do 8–17, Fr 8–15 Uhr).");
+    // Die Anfrage darf trotzdem nicht verloren gehen: Akte fortschreiben,
+    // damit Dirk Fotos und Text bekommt.
+    await anfrageFortschreiben({ sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from, antwort: "", alexText: "",
+      kundentext: text, fotos: mediaIds.length, profilName, mediaIds }).catch(() => {});
     return;
   }
-
-  const data = await r.json();
-  let reply = (data.content || [])
-    .filter(b => b.type === "text").map(b => b.text).join("\n").trim();
-
-  // Reisst die Antwort am Laengenlimit ab, endet sie mitten im Satz
-  // ("... ein, zwei Fotos vom"). Dann den angefangenen Satz lieber
-  // wegschneiden als ihn halb zu verschicken.
-  if (data.stop_reason === "max_tokens" && reply) {
-    const bisSatzende = reply.replace(/\s+\S*$/, "");
-    const m = bisSatzende.match(/^[\s\S]*[.!?…]/);
-    if (m && m[0].trim().length > 20) reply = m[0].trim();
-  }
-
-  // Termin-Marker: auf WhatsApp gibt es keinen Kalender-Button –
-  // Marker entfernen (der Termin steht ja im Text bestätigt).
-  // Terminanfrage an den Inhaber melden, bevor die Marker entfernt werden
-  // Nur bei Kunden eine Terminanfrage anlegen. Spricht der Inhaber ueber
-  // Termine, waere das eine Geisteranfrage an ihn selbst.
-  // Zurueckgehaltene Nachtmeldungen zustellen, sobald wieder Buerozeit
-  // ist und irgendjemand schreibt.
-  await warteschlangeZustellen().catch(() => {});
-  // Der Wecker laeuft im Hobby-Tarif nur einmal am Tag. Deshalb erledigt
-  // jede eingehende Nachricht die faelligen Aufgaben mit: Abbruch-
-  // Meldungen, Morgenbriefing, Wochenbericht. Alles ist gegen doppelte
-  // Ausfuehrung gesichert.
-  await offeneGespraecheMelden().catch(() => {});
-  await weckerAufgaben().catch(() => {});
-
-  if (!chef) {
-    await meldeTermin({ antwort: reply, kanal: "whatsapp", kundeNr: from,
-                        thema: text, ersatzName: profilName });
-    // Fotos gehen jetzt zusammen mit der Anfrage-Meldung an Dirk
-    // (anfrageFortschreiben), mit Nummer und Name in der Unterschrift.
-  }
-
-  // Bestaetigter Termin: Auf WhatsApp gibt es keine Karte mit Knoepfen.
-  // Statt den Marker nur zu entfernen, haengen wir eine antippbare
-  // Kalender-Adresse an. Nur beim BESTAETIGTEN Termin - beim blossen
-  // Wunschtermin bewusst nicht, damit niemand einen Eintrag anlegt,
-  // den die Werkstatt vielleicht noch absagt.
-  const mOk = String(reply).match(RE_TERMIN_OK);
-  let kalenderZeile = "";
-  if (mOk && !chef) {
-    kalenderZeile = "\n\nIn den Kalender eintragen:\n" +
-      icsAdresse(mOk[1].trim(), mOk[2].trim(), mOk[3].trim());
-  }
+  const data = r.data;
+  let reply = r.text;
 
   // Rohfassung MIT Markern fuer den Verlauf: So sieht der Assistent
   // beim naechsten Zug, dass er die Daten schon weitergegeben hat.
@@ -349,8 +498,16 @@ async function verarbeite(req) {
   const hatteDaten = RE_KONTAKT.test(rohAntwort) || RE_KVA.test(rohAntwort) ||
                      RE_TERMIN.test(rohAntwort) || RE_BUCHUNG.test(rohAntwort);
 
-  reply = markerRaus(reply);
+  // Bestaetigter Termin (alter Weg): Auf WhatsApp gibt es keine Karte mit
+  // Knoepfen, deshalb eine antippbare Kalender-Adresse.
+  const mOk = rohAntwort.match(RE_TERMIN_OK);
+  let kalenderZeile = "";
+  if (mOk) {
+    kalenderZeile = "\n\nIn den Kalender eintragen:\n" +
+      icsAdresse(mOk[1].trim(), mOk[2].trim(), mOk[3].trim());
+  }
 
+  reply = markerRaus(reply);
   // Gedankenstriche und Ausrufezeichen entfernen (wirken maschinell)
   reply = saeubern(reply, true).trim();
   // Leere Antwort: Hat das Modell nur Marker geschickt, ist das ein
@@ -358,34 +515,24 @@ async function verarbeite(req) {
   // und fragen NICHT "anders formulieren" (das waere nach gelieferten
   // Daten ein Schlag ins Gesicht).
   if (!reply) {
-    // Was hat die KI geliefert? Fuer die Fehlerliste, damit man die
-    // Ursache spaeter erkennt.
     const bloecke = (data.content || []).map(b => b.type).join(",") || "keine";
     const marker = (rohAntwort.match(/\[\[([A-Z_]+)\|/g) || []).map(m => m.slice(2, -1)).join(",") || "keine";
-    const wer = chef ? "Inhaber" : "Kunde …" + String(from).slice(-4);
+    const wer = "Kunde …" + String(from).slice(-4);
     const technik = "stop_reason=" + (data.stop_reason || "?") + ", Blöcke=" + bloecke + ", Marker=" + marker;
 
     // Zweiter Versuch: nur den sichtbaren Satz nachfordern. Die Marker
     // aus dem ersten Versuch bleiben gueltig (Buchung, Kontakt).
-    let zweiter = "";
-    try {
-      const r2 = await kiFragen("\n\nWICHTIG: Deine letzte Antwort enthielt keinen Text für " +
-        (chef ? "Dirk" : "den Kunden") + ". Antworte jetzt mit ein bis zwei kurzen, sichtbaren Sätzen. " +
-        "Keine technischen Marker in dieser Antwort.");
-      if (r2.ok) {
-        const d2 = await r2.json();
-        zweiter = saeubern(markerRaus((d2.content || []).filter(b => b.type === "text").map(b => b.text).join("\n")), true).trim();
-      }
-    } catch (_) {}
+    const r2 = await kiAnfrage({ messages, zusatz: zusatz +
+      "\n\nWICHTIG: Deine letzte Antwort enthielt keinen Text für den Kunden. Antworte jetzt mit ein bis zwei kurzen, sichtbaren Sätzen. " +
+      "Keine technischen Marker in dieser Antwort." });
+    const zweiter = r2.ok ? saeubern(markerRaus(r2.text), true).trim() : "";
 
     if (zweiter) {
       reply = zweiter;
       await fehlerLog("leer-behoben", "WhatsApp, " + wer + ": erste KI-Antwort ohne Text, zweiter Versuch erfolgreich (" + technik + ")");
     } else {
       const mB = rohAntwort.match(RE_BUCHUNG);
-      reply = chef
-        ? "Das habe ich gerade nicht hinbekommen. Schreib es mir bitte noch einmal, oder schick \"Hilfe\" für alle Befehle."
-        : mB
+      reply = mB
           ? "Danke, Ihr Termin ist eingetragen. Die Einzelheiten und den Kalendereintrag schicke ich Ihnen gleich hier."
           : hatteDaten
             ? "Danke, das habe ich alles notiert und an unser Team weitergegeben. " +
@@ -398,64 +545,45 @@ async function verarbeite(req) {
   // Verbindliche Buchung pruefen (harte Regeln im Code). Passt sie,
   // bekommt der Kunde den Kalenderlink; passt sie nicht, die Korrektur
   // mit freien Alternativen in derselben Nachricht.
-  if (!chef) {
-    const mKB = rohAntwort.match(RE_KONTAKT);
-    const bu = await buchungVerarbeiten({
-      antwort: rohAntwort, kanal: "whatsapp", sitzung: "wa:" + from, kundeNr: from,
-      name: ((mKB && mKB[1]) || "").trim(), tel: ((mKB && mKB[2]) || "").trim() || from,
-      thema: text, fotos: mediaIds.length
-    }).catch(e => { console.error("buchung", e && e.message); return null; });
-    if (bu && bu.ok) kalenderZeile = "\n\nIn den Kalender eintragen:\n" + bu.ics;
-    else if (bu && bu.korrektur) reply += "\n\n" + bu.korrektur;
-  }
+  const mKB = rohAntwort.match(RE_KONTAKT);
+  const bu = await buchungVerarbeiten({
+    antwort: rohAntwort, kanal: "whatsapp", sitzung: "wa:" + from, kundeNr: from,
+    name: ((mKB && mKB[1]) || "").trim(), tel: ((mKB && mKB[2]) || "").trim() || from,
+    thema: text, fotos: mediaIds.length
+  }).catch(e => { console.error("buchung", e && e.message); return null; });
+  if (bu && bu.ok) kalenderZeile = "\n\nIn den Kalender eintragen:\n" + bu.ics;
+  else if (bu && bu.korrektur) reply += "\n\n" + bu.korrektur;
   if (kalenderZeile) reply += kalenderZeile;
 
+  // ---- ERST antworten, dann alles Weitere -------------------------------
   await sendeMenschlich(from, reply);
-  await logGapIfNeeded(text, reply);   // Wissenslücke still protokollieren
 
   // ---- Verlauf speichern ---------------------------------------
-  await memSet(from, [...messages.map(m => ({
-    role: m.role,
-    content: typeof m.content === "string" ? m.content : text
-  })), { role: "assistant", content: hatteDaten ? rohAntwort : reply }].slice(-MAX_TURNS));
+  await memSet(from, [...merk, { role: "assistant", content: hatteDaten ? rohAntwort : reply }].slice(-MAX_TURNS));
+  await logGapIfNeeded(text, reply);   // Wissenslücke still protokollieren
+
+  // Terminanfrage nach altem Muster an den Inhaber melden
+  await meldeTermin({ antwort: rohAntwort, kanal: "whatsapp", kundeNr: from, thema: text, ersatzName: profilName }).catch(() => {});
+
+  // Akte fortschreiben: Angaben, Fotos, Gespraech, Dringlichkeit. Hier
+  // entscheidet sich auch, ob Dirk sofort eine Karte bekommt.
+  const akte = await anfrageFortschreiben({
+    sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from,
+    antwort: rohAntwort, alexText: reply, kundentext: text, fotos: mediaIds.length,
+    profilName, mediaIds
+  }).catch(e => { console.error("akte", e && e.message); return null; });
+  await spiegeln({ kanal: "whatsapp", akte, kundeText: text, alexText: reply, fotos: mediaIds.length });
 
   // Lernen: Gespraech anonymisiert ablegen (Kennung = gehashte Nummer,
-  // nie die Nummer selbst). Nach LERN_INTERVALL Gespraechen Lernrunde.
-  if (!chef) {
-    // Offenes Gespraech mitfuehren. Auf WhatsApp ist der Rueckweg zwar
-    // vorhanden, aber der Inhaber soll trotzdem sehen, wer angefragt
-    // und dann nicht mehr geantwortet hat.
-    await anfrageFortschreiben({
-      sitzung: "wa:" + from, kanal: "whatsapp", kundeNr: from,
-      antwort: rohAntwort, kundentext: text, fotos: mediaIds.length,
-      profilName, mediaIds
-    }).catch(e => console.error("akte", e && e.message));
-    // Jede WhatsApp-Unterhaltung bekommt eine Nummer, damit Dirk sie mit
-    // "Uebernehme N" uebernehmen kann (reine Unterhaltung = Status
-    // "gespraech", zaehlt nicht als offene Anfrage).
-    const akteM = await akteHolenOderAnlegen({ kanal: "whatsapp", kundeNr: from, sitzung: "wa:" + from, status: "gespraech" }).catch(() => null);
-    await spiegeln({ kanal: "whatsapp", akte: akteM, kundeText: text, alexText: reply, fotos: mediaIds.length });
-    const mKon2 = String(rohAntwort).match(RE_KONTAKT);
-    await gespraechMerken({
-      sitzung: "wa:" + from, kanal: "whatsapp",
-      name: ((mKon2 && mKon2[1]) || "").trim(),
-      tel: from,
-      thema: String(text || "").slice(0, 160),
-      fotos: mediaIds.length,
-      abgeschlossen: hatteDaten
-    }).catch(() => {});
+  // nie die Nummer selbst). Die Auswertung macht der Wecker.
+  try {
+    await gespraechAblegen({
+      kennung: lernKennung(from), kanal: "whatsapp",
+      verlauf: [...merk, { role: "assistant", content: rohAntwort }]
+    });
+  } catch (e) { console.error("lernen", e && e.message); }
 
-    try {
-      let hsh = 0;
-      for (const c of String(from)) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
-      const faellig = await gespraechAblegen({
-        kennung: "wa" + hsh.toString(36), kanal: "whatsapp",
-        verlauf: [...messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : text })),
-                  { role: "assistant", content: rohAntwort }]
-      });
-      if (faellig) await lernrunde();
-    } catch (e) { console.error("lernen", e && e.message); }
-  }
+  await nacharbeit(start);
 }
 
 // ---- Menschlich wirkendes Senden ----------------------------------
@@ -578,9 +706,7 @@ async function memSet(key, value) {
 
 // ---- Lern-Modus: Inhaber kann Alex per WhatsApp Wissen geben --
 function isOwner(num) {
-  return (process.env.OWNER_NUMBERS || "").split(",")
-    .map(s => s.replace(/\D/g, "")).filter(Boolean)
-    .includes(String(num).replace(/\D/g, ""));
+  return berechtigteNummern().includes(String(num).replace(/\D/g, ""));
 }
 
 async function handleOwnerCommand(from, text) {
@@ -677,6 +803,16 @@ async function handleOwnerCommand(from, text) {
     return true;
   }
 
+  // Schalter: Darf Alex Kunden von sich aus anschreiben, wenn sie still werden?
+  if ((m = t.match(/^nachhaken\s+(an|aus|ein)$/i))) {
+    const an = !/aus/i.test(m[1]);
+    await redis("SET", "einstellung:nachhaken", an ? "an" : "aus");
+    await sendWhatsApp(from, an
+      ? "Nachhaken ist an. Wird ein Kunde mittendrin still, melde ich mich einmal bei ihm, und einmal bevor WhatsApp nach 24 Std. schließt."
+      : "Nachhaken ist aus. Ich schreibe keinem Kunden mehr von mir aus. Die Karten an dich kommen weiter.");
+    return true;
+  }
+
   if (/^(status|diagnose|test)$/i.test(t)) {
     const marke = "diag:" + Date.now();
     const schreiben = await redis("SET", marke, "ok", "EX", 60);
@@ -686,6 +822,12 @@ async function handleOwnerCommand(from, text) {
     const fehler = await jsonLesen("fehlerlog", []);
     const u = speicherUrl();
     const tk = speicherToken();
+    const herz = Number(await redis("GET", "herz:wecker")) || 0;
+    const weckerText = !herz ? "NIE gelaufen (cron-job.org einrichten)"
+      : Date.now() - herz < 40 * 60000 ? "läuft, zuletzt vor " + Math.round((Date.now() - herz) / 60000) + " Min."
+      : "STEHT seit " + Math.round((Date.now() - herz) / 60000) + " Min.";
+    const lernStand = await jsonLesen("lern:kennzahlen", null);
+    const lernOffen = (await jsonLesen("lern:vorschlaege", [])).length;
     await sendWhatsApp(from,
       "Selbsttest\n────────\n" +
       "Speicher konfiguriert: " + (u ? "ja" : "NEIN") + "\n" +
@@ -703,6 +845,10 @@ async function handleOwnerCommand(from, text) {
       "Vorlage für Meldungen: " + (process.env.WA_VORLAGE_INHABER ? process.env.WA_VORLAGE_INHABER : "FEHLT (Meldungen kommen nur, wenn du in den letzten 24 Std. geschrieben hast)") + "\n" +
       "Vorlage Tagesstart: " + (process.env.WA_VORLAGE_TAGESSTART || "keine eigene (nutzt die für Meldungen)") + "\n" +
       "E-Mail-Notweg: " + (process.env.RESEND_API_KEY ? "an " + (process.env.NOTFALL_MAIL || "schaden@alb.berlin") : "AUS") + "\n\n" +
+      "Nachhaken bei stillen Kunden: " + ((await nachhakenAktiv()) ? "an" : "AUS") + "\n" +
+      "Wecker (alle 15 Min.): " + weckerText + "\n" +
+      "Letzte Lernrunde: " + (lernStand ? lernStand.d : "noch keine") + " · offene Vorschläge: " + lernOffen + "\n" +
+      "Technik-Meldungen gehen an: " + ((process.env.TECHNIK_NUMMERN || "").trim() ? "eigene Nummer (TECHNIK_NUMMERN)" : "dieselben wie Kundenmeldungen") + "\n\n" +
       "Letzte Aussetzer\n────────\n" +
       (fehler.length
         ? fehler.slice(-6).reverse().map(f => new Date(f.ts).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }) + " · " + f.art + (f.grund ? " · " + f.grund : "")).join("\n")
@@ -747,32 +893,22 @@ async function handleOwnerCommand(from, text) {
   }
   if (/^(hilfe|befehle|was kannst du)$/i.test(t)) {
     await sendWhatsApp(from,
-      "Deine Befehle:\n" +
+      "Das Wichtigste geht ohne Befehle:\n" +
+      "• Knöpfe unter jeder Karte: Ich rufe an · Vorbeikommen · Details · Erledigt\n" +
+      "• Preis schicken: auf die Karte antworten (Nachricht nach rechts wischen), z. B. \"480 Euro, Stoßfänger lackieren\"\n" +
+      "• Oder schreib mir einfach, was du brauchst: \"Was will Nr. 7?\" oder \"Schreib Nr. 7, dass wir uns Montag melden\". Ich zeige dir den Text, du tippst auf Senden.\n\n" +
+      "Befehle, falls du sie lieber magst:\n" +
       "ANFRAGEN\n" +
-      "• Anfragen – alle offenen mit Name und Nummer\n" +
-      "• Anfrage 3 – alles zu Nr. 3 samt Fotos\n" +
-      "• Fotos 3 – nur die Fotos zu Nr. 3\n" +
-      "• Alle Details – alle offenen samt Fotos\n" +
-      "• Angebot 3: 480 Euro, Kotflügel richten – ich schicke es dem Kunden\n" +
-      "• Erledigt 3 / Nachfassen 3 – abschließen oder nachhaken\n" +
-      "• Vorbeikommen 3 – Kunde wird zur kostenlosen Begutachtung eingeladen\n" +
-      "• Übernehme 3 – du schreibst selbst mit dem Kunden, \"Fertig\" beendet\n" +
-      "• Mitlesen an / aus – Kundengespräche mitlesen\n" +
+      "Anfragen · Anfrage 3 · Fotos 3 · Gespräch 3 · Alle Details\n" +
+      "Angebot 3: 480 Euro, … · Vorbeikommen 3 · Anruf 3\n" +
+      "Erledigt 3 (auch mehrere: Erledigt 2 3 4) · Nachfassen 3\n" +
+      "Übernehme 3 (selbst schreiben, \"Fertig\" beendet)\n" +
+      "Mitlesen an/aus (jedes Gespräch live) · Nachhaken an/aus (Alex meldet sich bei stillen Kunden)\n" +
       "TERMINE\n" +
-      "• Termine / Termine morgen – alle gebuchten Termine\n" +
-      "• Voll Donnerstag / Frei Donnerstag – Tag sperren oder öffnen\n" +
-      "• Urlaub 1.10. bis 5.10. – Zeitraum sperren\n" +
-      "• Absagen 7 / Verschieben 7 Freitag 8-10 – Kunde wird informiert\n" +
-      "• Eintragen Donnerstag 11-13 Meier – Telefontermin mitzählen\n" +
-      "• Fertig 7 – Auto fertig, Kunde bekommt Abholzeiten\n" +
-      "WISSEN\n" +
-      "• Merk dir: … – neues Wissen, gilt sofort\n" +
-      "• Zeig Notizen / Vergiss 2\n" +
-      "• Zeig Lücken / Lücken leeren\n" +
-      "• Lernen / Lernen 3 ok / Lernen 3 nein / Gelernt / Lernrunde\n" +
+      "Termine · Voll/Frei Donnerstag · Urlaub 1.10. bis 5.10.\n" +
+      "Absagen 7 · Verschieben 7 Freitag 8-10 · Eintragen Donnerstag 11-13 Meier · Fertig 7\n" +
       "SONST\n" +
-      "• Protokoll / Protokoll gestern – Gespräche des Tages\n" +
-      "• Status – läuft alles?");
+      "Merk dir: … · Zeig Notizen · Lernen · Protokoll · Status");
     return true;
   }
   if ((m = t.match(/^vergiss (nummer |notiz )?(\d+)/i))) {

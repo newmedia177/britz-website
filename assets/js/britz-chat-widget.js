@@ -658,6 +658,11 @@
         a.textContent = roh;
         if (roh.indexOf("@") > 0) {
           a.href = "mailto:" + roh;
+        } else if (/^0\d/.test(roh) && roh.replace(/\D/g, "") === "015164502368") {
+          // Die WhatsApp-Nummer der Werkstatt: direkt den Chat oeffnen
+          a.href = "https://wa.me/4915164502368";
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
         } else if (/^0\d/.test(roh)) {
           a.href = "tel:" + roh.replace(/[^\d+]/g, "");
         } else {
@@ -798,17 +803,59 @@
     // Cookie, nichts Wiedererkennbares ueber die Sitzung hinaus.
     var SITZUNG = "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
-    async function send(msg) {
-      if (busy) return;
-      msg = (msg || text.value).trim();
-      if (!msg && !pendingImages.length) return;
-      markEngaged();
+    /* ---- Nachhaken, wenn der Kunde still wird -------------------------
+       Ein Mensch am Empfang wartet nicht stumm, bis der Kunde geht. Hat
+       Alex etwas gefragt und kommt gut eine Minute nichts (kein Tippen,
+       kein Foto), meldet er sich EINMAL von selbst und macht den naechsten
+       Schritt leichter. Nur einmal pro Gespraech, nur bei offenem Chat
+       und sichtbarem Fenster, nicht mehr nach dem Abschluss. */
+    var STUPS_NACH_MS = 75000;
+    var stupsUhr = null, gestupst = false, stupsFaellig = false;
 
-      var imgs = pendingImages.slice();
-      pendingImages = []; renderPreviews();
-      text.value = ""; autoGrow(); updateSend();
-      row("user", msg || "Foto gesendet", imgs);
-      history.push({ role: "user", content: msg || "(Foto vom Schaden)" });
+    function stupsErlaubt() {
+      if (gestupst || busy || !history.length) return false;
+      var letzte = history[history.length - 1];
+      if (letzte.role !== "assistant") return false;
+      var sichtbar = String(letzte.content).replace(/\[\[[A-Z_]+\|[^\]]*\]\]/g, "").trim();
+      if (!/\?\s*$/.test(sichtbar)) return false;                 // Alex hat nichts gefragt
+      for (var i = 0; i < history.length; i++) {                 // schon uebergeben oder gebucht
+        if (history[i].role === "assistant" && /\[\[(KVA|BUCHUNG|TERMIN|TERMIN_OK)\|/.test(history[i].content)) return false;
+      }
+      return true;
+    }
+    function stupsJetzt() {
+      stupsFaellig = false;
+      if (!stupsErlaubt()) return;
+      if (text.value.trim() || pendingImages.length) return;     // Kunde schreibt gerade
+      if (!panel.classList.contains("open")) return;
+      if (document.hidden) { stupsFaellig = true; return; }      // nachholen, wenn er zurueckkommt
+      gestupst = true;
+      send("", true);
+    }
+    function stupsPlanen() {
+      clearTimeout(stupsUhr);
+      if (!stupsErlaubt()) return;
+      stupsUhr = setTimeout(stupsJetzt, STUPS_NACH_MS);
+    }
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden && stupsFaellig) { clearTimeout(stupsUhr); stupsUhr = setTimeout(stupsJetzt, 4000); }
+    });
+
+    async function send(msg, stupser) {
+      if (busy) return;
+      clearTimeout(stupsUhr); stupsFaellig = false;
+      var imgs = [];
+      if (!stupser) {
+        msg = (msg || text.value).trim();
+        if (!msg && !pendingImages.length) return;
+        markEngaged();
+
+        imgs = pendingImages.slice();
+        pendingImages = []; renderPreviews();
+        text.value = ""; autoGrow(); updateSend();
+        row("user", msg || "Foto gesendet", imgs);
+        history.push({ role: "user", content: msg || "(Foto vom Schaden)" });
+      }
 
       busy = true; updateSend();
 
@@ -842,7 +889,7 @@
         var res = await fetch(CONFIG.apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, images: imgs, sitzung: SITZUNG }),
+          body: JSON.stringify({ messages: history, images: imgs, sitzung: SITZUNG, nachhaken: !!stupser }),
           signal: ac ? ac.signal : undefined
         });
         if (!res.ok) throw new Error("HTTP " + res.status);
@@ -964,6 +1011,11 @@
         full = handleTermin(typingMsg, roh);
         // Nie eine leere Blase stehen lassen. Kommt trotz allem nichts
         // Sichtbares an, steht hier ein ehrlicher Satz statt Stille.
+        if (!full.trim() && stupser) {
+          // Beim Nachhaken lieber gar nichts als ein Ersatzsatz
+          if (typingMsg.parentNode) typingMsg.parentNode.remove();
+          return;
+        }
         if (!full.trim()) {
           full = "Ich habe alles notiert und gebe es an das Team weiter. " +
                  "Falls Sie nichts mehr von uns h\u00f6ren, erreichen Sie uns " +
@@ -978,6 +1030,11 @@
       } catch (e) {
         if (typer) { clearTimeout(typer); typer = null; }
         if (typeof wachhund !== "undefined") clearTimeout(wachhund);
+        if (stupser) {
+          // Das Nachhaken war ein Zusatz. Klappt es nicht, bleibt der Chat wie er war.
+          if (typingMsg && typingMsg.parentNode) typingMsg.parentNode.remove();
+          return;
+        }
         typingMsg.style.padding = "";
         typingMsg.innerHTML = "";
         var abgebrochen = e && (e.name === "AbortError");
@@ -992,6 +1049,7 @@
         busy = false; updateSend();
         setState("", engaged || istGeschaeftszeit() ? "Online" : "Bald zur\u00fcck");
         applyPresence();
+        stupsPlanen();
       }
     }
 
@@ -1016,7 +1074,7 @@
       document.documentElement.classList.remove("alb-chat-offen");
     };
     sendB.onclick = function () { send(); };
-    text.addEventListener("input", function () { autoGrow(); updateSend(); });
+    text.addEventListener("input", function () { autoGrow(); updateSend(); stupsPlanen(); });
     text.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
     });
