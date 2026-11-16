@@ -92,7 +92,7 @@ const { default: wa } = await import("../api/whatsapp.js");
 
 let ok = 0, n = 0;
 const pruefe = (name, bed) => { n++; if (bed) ok++; log((bed ? "OK     " : "FEHLER ") + name); };
-const res = () => ({ out: [], ende: false, setHeader() {}, writeHead() {}, status() { return this; }, json() {}, send() {}, write(s) { this.out.push(s); }, end() { this.ende = true; } });
+const res = () => ({ out: [], ende: false, setHeader() {}, writeHead() {}, status(c) { this.statusCode = c; return this; }, json() {}, send() {}, write(s) { this.out.push(s); }, end() { this.ende = true; } });
 const sichtbar = r => T.markerRaus(r.out.filter(s => s.startsWith("data: ") && !s.includes("[DONE]")).map(s => JSON.parse(s.slice(6).trim())).join("")).trim();
 let mid = 0;
 // typ: "text" | "bild" | "button" (Vorlagen-Knopf) | "knopf" (Knopf unter einer Karte, text = Kennung)
@@ -546,6 +546,31 @@ gesendet = []; await whatsappMeldetFehler();
 const warn = gesendet.find(g => g.an === "dirk" && /kam NICHT an/.test(g.text));
 pruefe("WhatsApp meldet Scheitern: Dirk bekommt sofort Bescheid, mit Nummer und Text", warn && /Herr Bauer/.test(warn.text) && /\+49 176 12345678/.test(warn.text) && /520 Euro/.test(warn.text));
 pruefe("Akte vermerkt es, Alex hält den Kunden für nicht mehr erreichbar", akte(4).verlauf.some(v => /NICHT angekommen/.test(v)) && !/Vorbeikommen/.test(JSON.stringify(warn.knoepfe)));
+
+// ---- 16. Absender-Prüfung und Website-Dringend ------------------------------
+log("\n16. Sicherheit");
+{
+  const { Readable } = await import("node:stream");
+  const crypto = await import("node:crypto");
+  reset(); uhr("2026-11-16T09:00:00Z"); process.env.WHATSAPP_APP_SECRET = "geheim123";
+  const koerper = JSON.stringify({ entry: [{ changes: [{ value: { contacts: [{ profile: { name: "Test" } }],
+    messages: [{ id: "sig1", from: DIRK, timestamp: "1", type: "text", text: { body: "Angebot 1: 1 Euro" } }] } }] }] });
+  const anfrage = sig => Object.assign(Readable.from([Buffer.from(koerper)]), { method: "POST", query: {}, headers: { "x-hub-signature-256": sig } });
+  let r1 = res(); await wa(anfrage("sha256=falsch"), r1);
+  pruefe("gefälschte Nachricht 'von Dirk' wird abgewiesen (401)", r1.statusCode === 401 && !gesendet.length);
+  const echt = "sha256=" + crypto.createHmac("sha256", "geheim123").update(koerper).digest("hex");
+  kiAntwort = "Gern."; let r2 = res(); await wa(anfrage(echt), r2);
+  pruefe("echte Nachricht von Meta wird angenommen", r2.statusCode !== 401 && gesendet.some(g => g.an === "dirk"));
+  delete process.env.WHATSAPP_APP_SECRET;
+}
+reset(); uhr("2026-11-16T09:00:00Z");
+kiAntwort = "Das tut mir leid. Wie heißen Sie und unter welcher Nummer erreichen wir Sie? [[DRINGEND|Auto nach Unfall nicht fahrbereit]]";
+let rd = res(); await chat({ method: "POST", body: { sitzung: "web-d", messages: [{ role: "user", content: "Unfall, Auto fährt nicht mehr" }] } }, rd);
+pruefe("Website ohne Nummer + dringend: keine nutzlose rote Karte, Alex fragt nach der Nummer", !gesendet.some(g => g.an === "dirk" && /Dringend/.test(g.text)));
+kiAntwort = "Danke, Herr Roth, der Chef ruft Sie an. [[KONTAKT|Roth|0176 5550002]]";
+rd = res(); await chat({ method: "POST", body: { sitzung: "web-d", messages: [{ role: "user", content: "Unfall, Auto fährt nicht mehr" }, { role: "assistant", content: "Wie erreichen wir Sie?" }, { role: "user", content: "Roth, 0176 5550002" }] } }, rd);
+uhr("2026-11-16T09:10:00Z"); gesendet = []; denkAntwort = LAGE({ kurz: "Unfall, Fahrzeug nicht fahrbereit.", stimmung: "eilig" }); await A.weckerAufgaben();
+pruefe("sobald die Nummer da ist: rote Karte mit Nummer", gesendet.some(g => g.an === "dirk" && /🔴 Dringend/.test(g.text) && /0176 5550002/.test(g.text)));
 
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));

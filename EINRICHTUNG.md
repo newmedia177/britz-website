@@ -44,6 +44,7 @@ Alle auf **Production and Preview**.
 |---|---|---|
 | `TECHNIK_NUMMERN` | Julians Nummer, Format wie unten | Lernvorschläge, Lernbericht und Technik-Wochenbericht gehen dann NUR an diese Nummer. Dirk bekommt nur noch Kundenthemen. Die Nummer darf Befehle geben, auch wenn sie nicht in `OWNER_NUMBERS` steht. |
 | `TECHNIK_MAIL` | E-Mail der Technik | Aussetzer und „Wecker läuft nicht“ |
+| `WHATSAPP_APP_SECRET` | App-Geheimnis aus Meta (App-Dashboard → Einstellungen → Allgemein → App-Geheimnis), als **Secret** | Prüft, dass Webhook-Aufrufe wirklich von Meta kommen. Ohne sie könnte jemand Nachrichten „von Dirk“ vortäuschen. „Status“ zeigt „Absender-Prüfung: an“. |
 | `CLAUDE_MODEL_DENKEN` | Modellname | Eigenes Modell für Zusammenfassung, Nachhaken und Lernrunde. Ohne Angabe gilt `CLAUDE_MODEL`. |
 | `WA_SAMMELN_MS` | `2500` | So lange wartet Alex auf weitere Textnachrichten, bevor er einmal auf alles antwortet. |
 | `WA_SAMMELN_BILD_MS` | `4500` | Dasselbe nach einem Foto (Fotos kommen meist im Paket). |

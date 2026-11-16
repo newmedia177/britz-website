@@ -384,7 +384,10 @@ export async function anfrageFortschreiben({ sitzung, kanal, kundeNr, antwort, k
 
   // Sofort melden, wenn die Anfrage uebergeben oder dringend ist. Alles
   // andere kommt, sobald das Gespraech ruht (fallPflege).
-  if (akte.karteOffen && (neuKva || neuDringend)) {
+  // (Website-Besucher ohne Nummer: Dirk koennte nichts tun. Dann fragt
+  // Alex zuerst nach dem Rueckweg; die Karte kommt, sobald er da ist.)
+  const erreichbarJetzt = akte.kanal === "whatsapp" || !!akte.tel;
+  if (akte.karteOffen && (neuKva || neuDringend) && erreichbarJetzt) {
     await karteSenden(akte.nr).catch(e => console.error("karte", e && e.message));
   }
   return akte;

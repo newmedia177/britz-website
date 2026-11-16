@@ -12,6 +12,7 @@
 //
 // Webhook-URL in der Meta-App: https://<eure-domain>/api/whatsapp
 
+import crypto from "node:crypto";
 import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, gelerntBlock, lernBefehl, lernKennung } from "./_lernen.mjs";
 import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben, chefUeberblick, nachhakenAktiv,
@@ -57,11 +58,38 @@ export default async function handler(req, res) {
   }
   if (req.method !== "POST") { res.status(405).end(); return; }
 
+  // ---- Kommt die Nachricht wirklich von Meta? ----------------------------
+  // Ohne diese Pruefung koennte jeder, der die Adresse kennt, eine Nachricht
+  // "von Dirk" vortaeuschen und z. B. mit "Angebot 7: …" Kunden anschreiben
+  // lassen. Meta unterschreibt jeden Aufruf mit dem App-Geheimnis.
+  // Aktiv, sobald WHATSAPP_APP_SECRET in Vercel steht.
+  const start = Date.now();
+  let koerper = null;
+  const geheim = process.env.WHATSAPP_APP_SECRET;
+  if (geheim) {
+    const roh = await rohKoerper(req);
+    if (roh && roh.length) {
+      const soll = "sha256=" + crypto.createHmac("sha256", geheim).update(roh).digest("hex");
+      const ist = String((req.headers && (req.headers["x-hub-signature-256"] || req.headers["X-Hub-Signature-256"])) || "");
+      const passt = ist.length === soll.length && crypto.timingSafeEqual(Buffer.from(ist), Buffer.from(soll));
+      if (!passt) {
+        console.error("whatsapp: Aufruf ohne gültige Meta-Signatur abgewiesen");
+        if ((await redis("SET", "einmal:signatur:" + new Date().toISOString().slice(0, 13), "1", "NX", "EX", 7200)) === "OK")
+          await fehlerLog("signatur", "WhatsApp-Aufruf ohne gültige Meta-Signatur abgewiesen");
+        res.status(401).end();
+        return;
+      }
+      try { koerper = JSON.parse(roh.toString("utf8")); } catch (_) { koerper = null; }
+    } else if ((await redis("SET", "einmal:signatur-roh:" + new Date().toISOString().slice(0, 10), "1", "NX", "EX", 2 * 86400)) === "OK") {
+      await fehlerLog("signatur", "Meta-Signatur nicht prüfbar (Rohdaten fehlen), Aufruf trotzdem angenommen");
+    }
+  }
+
   // WICHTIG (Vercel): Die Funktion wird eingefroren, sobald die Antwort
   // gesendet ist. Deshalb erst ARBEITEN, dann 200 schicken. Meta wiederholt
   // den Aufruf bei Verzögerung – dagegen schützt die Dedupe-Prüfung unten.
   try {
-    await verarbeite(req, Date.now());
+    await verarbeite(koerper || req.body, start);
   } catch (e) {
     console.error("whatsapp handler", e);
   }
@@ -116,8 +144,22 @@ async function sammeln(from, eintrag) {
 
 const RE_AN_KUNDE = /\[\[AN_KUNDE\|\s*(\d{1,4})\s*\|([^\]]{5,1500})\]\]/;
 
-async function verarbeite(req, start) {
-  const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+// Rohdaten des Aufrufs lesen (fuer die Signatur). Gibt null zurueck, wenn
+// die Laufzeit den Inhalt schon gelesen hat.
+async function rohKoerper(req) {
+  if (!req || typeof req.on !== "function" || req.readableEnded || req.complete && !req.readable) return null;
+  return new Promise(fertig => {
+    const teile = []; let ende = false;
+    const schluss = v => { if (!ende) { ende = true; fertig(v); } };
+    req.on("data", c => teile.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    req.on("end", () => schluss(Buffer.concat(teile)));
+    req.on("error", () => schluss(null));
+    setTimeout(() => schluss(teile.length ? Buffer.concat(teile) : null), 3000);
+  });
+}
+
+async function verarbeite(body, start) {
+  const value = body?.entry?.[0]?.changes?.[0]?.value;
   const msg = value?.messages?.[0];
 
   if (!msg) {
@@ -857,6 +899,7 @@ async function handleOwnerCommand(from, text) {
       "E-Mail-Notweg: " + (process.env.RESEND_API_KEY ? "an " + (process.env.NOTFALL_MAIL || "schaden@alb.berlin") : "AUS") + "\n\n" +
       "Dein letzter Kontakt mit Alex: " + await letzterKontaktText(from) + "\n\n" +
       "KI-Modell: " + (process.env.CLAUDE_MODEL || "claude-sonnet-5") + " (ohne Vorab-Nachdenken)\n" +
+      "Absender-Prüfung (Meta-Signatur): " + (process.env.WHATSAPP_APP_SECRET ? "an" : "AUS (WHATSAPP_APP_SECRET fehlt)") + "\n" +
       "Nachhaken bei stillen Kunden: " + ((await nachhakenAktiv()) ? "an" : "AUS") + "\n" +
       "Wecker (alle 15 Min.): " + weckerText + "\n" +
       "Letzte Lernrunde: " + (lernStand ? lernStand.d : "noch keine") + " · offene Vorschläge: " + lernOffen + "\n" +
