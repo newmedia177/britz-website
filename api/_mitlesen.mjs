@@ -14,7 +14,7 @@
 //               Nur bei WhatsApp-Kunden moeglich: Den Website-Chat kann
 //               niemand nachtraeglich erreichen.
 
-import { redis, inhaberNummern, sendWA, sendWABild, istRuhezeit } from "./_termin.mjs";
+import { redis, inhaberNummern, sendWA, sendWABild, istRuhezeit, inhaberFenster } from "./_termin.mjs";
 import { akteFinden } from "./_anfragen.mjs";
 
 const UEB_SEK = 12 * 3600;
@@ -23,10 +23,21 @@ export async function mitlesenAktiv() {
   return ((await redis("GET", "einstellung:mitlesen")) || "an") === "an";
 }
 
-// Gespraechszug an Dirk spiegeln (Best Effort, nie blockierend)
-export async function spiegeln({ kanal, akte, kundeText, alexText, fotos }) {
+// Gespraechszug an Dirk spiegeln (Best Effort, nie blockierend).
+// Seit 16.11.2026 nur dort, wo Dirk etwas tun kann:
+//   - WhatsApp-Kunden (er kann mit "Übernehme N" eingreifen)
+//   - Website-Kunden mit Rueckweg (Nummer) oder fertig uebergebener Anfrage
+// Anonyme Website-Besucher (Oeffnungszeiten, erste Preisfrage ohne Nummer)
+// werden nicht mehr gespiegelt: Dirk kann ihnen nicht antworten, und
+// zehn solcher Ausschnitte am Nachmittag sind Laerm. Was daraus wird, sieht
+// er ohnehin in der Karte.
+// Mitlesen ist fluechtig: Ist Dirks WhatsApp-Fenster zu, wird nichts
+// verschickt und nichts fuer spaeter aufgehoben.
+export async function spiegeln({ kanal, akte, kundeText, alexText, fotos, sitzung }) {
   try {
     if (istRuhezeit() || !(await mitlesenAktiv())) return;
+    if (/^probe-/.test(String(sitzung || ""))) return;                 // Tests
+    if (kanal === "web" && !(akte && (akte.tel || akte.kvaTs))) return;
     const kopf = "💬 " + (akte ? "Nr. " + akte.nr + " · " : "") +
       (akte && akte.name ? akte.name : "unbekannt") + " · " + (kanal === "web" ? "Website" : "WhatsApp");
     const text = kopf + "\n" +
@@ -35,7 +46,10 @@ export async function spiegeln({ kanal, akte, kundeText, alexText, fotos }) {
       "Alex: " + String(alexText || "").replace(/\s+/g, " ").slice(0, 500) +
       (kanal === "whatsapp" && akte ? "\n→ eingreifen: \"Übernehme " + akte.nr + "\""
         : (akte && akte.tel ? "\n→ Website-Chat, eingreifen nur per Anruf: " + akte.tel : ""));
-    for (const n of inhaberNummern()) await sendWA(n, text.slice(0, 1500));
+    for (const n of inhaberNummern()) {
+      if ((await inhaberFenster(n)) === "zu") continue;
+      await sendWA(n, text.slice(0, 1500), { fluechtig: true });
+    }
   } catch (e) { console.error("spiegeln", e && e.message); }
 }
 
@@ -57,7 +71,7 @@ export async function uebernahmeBefehl(owner, t) {
   if (m) {
     const an = !/aus/i.test(m[1]);
     await redis("SET", "einstellung:mitlesen", an ? "an" : "aus");
-    return an ? "Mitlesen ist an. Du siehst jedes Kundengespräch (nachts nicht)." : "Mitlesen ist aus. Termine, Abbrüche und Briefings bekommst du weiter.";
+    return an ? "Mitlesen ist an. Du siehst jedes Gespräch, bei dem du eingreifen kannst (nachts nicht)." : "Mitlesen ist aus. Die Karten zu jedem Kunden und den Morgenüberblick bekommst du weiter.";
   }
 
   m = s.match(/^(?:übernehme|uebernehme|übernehmen|uebernehmen)\s+(\d{1,4})$/i);

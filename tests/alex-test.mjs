@@ -572,6 +572,25 @@ rd = res(); await chat({ method: "POST", body: { sitzung: "web-d", messages: [{ 
 uhr("2026-11-16T09:10:00Z"); gesendet = []; denkAntwort = LAGE({ kurz: "Unfall, Fahrzeug nicht fahrbereit.", stimmung: "eilig" }); await A.weckerAufgaben();
 pruefe("sobald die Nummer da ist: rote Karte mit Nummer", gesendet.some(g => g.an === "dirk" && /🔴 Dringend/.test(g.text) && /0176 5550002/.test(g.text)));
 
+// ---- 17. Mitlesen nur, wo Dirk etwas tun kann ----------------------------------
+log("\n17. Mitlesen");
+reset(); uhr("2026-11-16T15:00:00Z"); kiAntwort = "Mo bis Do 8 bis 17 Uhr.";
+let rm = res(); await chat({ method: "POST", body: { sitzung: "web-anonym", messages: [{ role: "user", content: "Öffnungszeiten?" }] } }, rm);
+pruefe("anonymer Website-Besucher: kein Mitlesen bei Dirk", !gesendet.some(g => g.an === "dirk" && /💬/.test(g.text)));
+kiAntwort = "Danke, Frau Lenz. [[KONTAKT|Lenz|0176 5550003]]";
+rm = res(); await chat({ method: "POST", body: { sitzung: "web-lenz", messages: [{ role: "user", content: "Lenz, 0176 5550003, Delle Tür" }] } }, rm);
+pruefe("Website mit Nummer: Dirk liest mit, mit Rückrufnummer", gesendet.some(g => g.an === "dirk" && /💬/.test(g.text) && /0176 5550003/.test(g.text)));
+gesendet = []; kiAntwort = "Danke."; rm = res(); await chat({ method: "POST", body: { sitzung: "probe-x", messages: [{ role: "user", content: "Lenz, 0176 5550004, Delle" }] } }, rm);
+pruefe("Testgespräche (probe-…): kein Mitlesen, nicht ins Lernen", !gesendet.some(g => g.an === "dirk" && /💬/.test(g.text)) && !Object.keys(sp).some(k => /lern:g:probe/.test(k)));
+reset(); uhr("2026-11-16T15:00:00Z"); sp["inhaber:fenster:" + DIRK] = String(Date.now() - 30 * 3600000); fensterOffen = false;
+kiAntwort = "Gern."; await waNachricht(KUNDE, "Hallo, Delle an der Tür");
+await whatsappMeldetFehler();
+pruefe("Dirks Fenster zu: Mitlesen wird gar nicht erst geschickt, nichts aufgehoben", !String(sp["unzugestellt:" + DIRK] || "").includes("💬"));
+reset(); uhr("2026-11-16T15:00:00Z");
+sp["unzugestellt:" + DIRK] = JSON.stringify([{ text: "💬 unbekannt · Website\nKunde: Öffnungszeiten?", ts: 1 }, { text: "🆕 Nr. 3 · Echt", akteNr: 3, ts: 2 }]);
+gesendet = []; kiAntwort = "Moin."; await waNachricht(DIRK, "Moin");
+pruefe("alte Mitlese-Ausschnitte werden nicht nachgeliefert, echte Karten schon", !gesendet.some(g => /💬 unbekannt/.test(g.text)) && gesendet.some(g => /Nr\. 3 · Echt/.test(g.text)));
+
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));
 console.error = stumm;

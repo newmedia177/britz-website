@@ -287,8 +287,9 @@ export default async function handler(req, res) {
 
   // Gespraech anonymisiert ablegen. Die Auswertung macht der Wecker
   // (Vorschlaege gehen zur Freigabe, nichts wird von selbst uebernommen).
+  // (Testgespraeche mit Sitzung "probe-…" gehen nicht in die Auswertung.)
   try {
-    await gespraechAblegen({ kennung: sitzung, kanal: "web", verlauf: verlaufWeb });
+    if (!/^probe-/.test(sitzung)) await gespraechAblegen({ kennung: sitzung, kanal: "web", verlauf: verlaufWeb });
   } catch (e) { console.error("lernen", e && e.message); }
 
   // Terminanfrage an den Inhaber melden
@@ -316,7 +317,7 @@ export default async function handler(req, res) {
   if (akte && akte.tel && !akte.uebergeben) {
     uebergabeAnWhatsApp(akte).catch(() => {});
   }
-  await spiegeln({ kanal: "web", akte, kundeText: frage, alexText: markerRaus(answer), fotos: images.length });
+  await spiegeln({ kanal: "web", akte, kundeText: frage, alexText: markerRaus(answer), fotos: images.length, sitzung });
   const mKon = String(answer || "").match(RE_KONTAKT);
   await gespraechMerken({
     sitzung, kanal: "web",

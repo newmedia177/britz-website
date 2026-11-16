@@ -231,7 +231,7 @@ export async function sendMail(betreff, text, empfaenger) {
   }
 }
 
-export async function sendWA(to, body) {
+export async function sendWA(to, body, { fluechtig = false } = {}) {
   if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
   try {
     const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
@@ -250,7 +250,9 @@ export async function sendWA(to, body) {
     }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) { console.error("send", r.status, await r.text().catch(() => "")); return false; }
     const id = await kennungAus(r);
-    await sendungMerken(id, { to, text: String(body).slice(0, 3900) });
+    // Fluechtige Nachrichten (Mitlesen) werden nicht nachgeliefert, wenn
+    // sie nicht ankommen: Ein Gespraechsausschnitt von gestern hilft niemandem.
+    if (!fluechtig) await sendungMerken(id, { to, text: String(body).slice(0, 3900) });
     return id;
   } catch (e) {
     console.error("send", e);
@@ -329,7 +331,7 @@ function nummernAus(s) {
 export async function inhaberHatGeschrieben(n) {
   await redis("SET", "inhaber:fenster:" + n, String(Date.now()), "EX", 60 * 86400);
 }
-async function inhaberFenster(n) {
+export async function inhaberFenster(n) {
   const w = await redis("GET", "inhaber:fenster:" + n);
   if (w === undefined || w === null) return "unbekannt";
   return Date.now() - Number(w) < 23.5 * 3600000 ? "offen" : "zu";
@@ -451,6 +453,7 @@ export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder =
 
 // Stufe 2 und 3: aufheben, per Vorlage anstupsen, sonst E-Mail.
 async function aufhebenUndAnstupsen(n, eintrag) {
+  if (/^💬/.test(String(eintrag.text || ""))) return true;   // Mitlesen: nicht aufheben
   const art = eintrag.art || "meldung";
   const titel = vorlagenFeld(eintrag.kurz || String(eintrag.text).split("\n")[0], 120);
   const liste = await jsonLesen("unzugestellt:" + n, []);
@@ -521,7 +524,10 @@ export async function zustellungGescheitert(id, code, grund) {
 // Alles Aufgehobene ausliefern, sobald der Inhaber schreibt (dann ist das
 // 24-Stunden-Fenster offen). Rueckgabe: Anzahl ausgelieferter Meldungen.
 export async function inhaberNachliefern(n) {
-  const liste = await jsonLesen("unzugestellt:" + n, []);
+  const alle = await jsonLesen("unzugestellt:" + n, []);
+  // Mitlese-Ausschnitte (💬) liegen nur aus der Zeit vor Update 24 hier.
+  const liste = alle.filter(e => !/^💬/.test(String(e.text || "")));
+  if (liste.length !== alle.length) await jsonSchreiben("unzugestellt:" + n, liste, 14 * 86400);
   if (!liste.length) return 0;
   let geliefert = 0;
   for (const e of liste) {
