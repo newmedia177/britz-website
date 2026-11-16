@@ -16,7 +16,7 @@
 // nur dafuer, dass Alex von vornherein Passendes anbietet.
 
 import { jsonLesen, jsonSchreiben, redis, inhaberNummern, sendWA, sendMail, zustellenAnInhaber,
-         istRuhezeit, icsAdresse } from "./_termin.mjs";
+         istRuhezeit, icsAdresse, terminSeite } from "./_termin.mjs";
 import { akteHolenOderAnlegen, akteFinden, akteSpeichern, anKunde } from "./_anfragen.mjs";
 
 export const MAX_PRO_TAG = 5;
@@ -254,7 +254,10 @@ export async function buchungVerarbeiten({ antwort, kanal, sitzung, kundeNr, nam
 function kalender(bu) {
   const titel = ARTEN[bu.art] + ", Zeitfenster " + fensterText(bu.von, bu.bis) + ", Autolackiererei in Britz";
   const iso = bu.datum + "T" + String(bu.von).padStart(2, "0") + ":00";
-  return { iso, titel, ort: ORTE[bu.ort], ics: icsAdresse(iso, titel, ORTE[bu.ort]) };
+  const ende = bu.datum + "T" + String(bu.bis).padStart(2, "0") + ":00";
+  return { iso, ende, titel, ort: ORTE[bu.ort], ics: icsAdresse(iso, titel, ORTE[bu.ort]),
+           seite: terminSeite(iso, ende, titel, ORTE[bu.ort]),
+           kurz: datumLesbar(bu.datum) + ", " + fensterText(bu.von, bu.bis) + ", " + ORTE[bu.ort] };
 }
 
 // ---- Befehle vom Inhaber --------------------------------------------

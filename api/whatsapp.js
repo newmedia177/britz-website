@@ -24,7 +24,7 @@ import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
 import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, belegteZeiten,
          warteschlangeZustellen, RE_KONTAKT, RE_KVA, RE_TERMIN,
-         sendWA, sendWAKnoepfe, sendWAGelesen, offeneGespraecheMelden, inhaberNachliefern,
+         sendWA, sendWAKnoepfe, sendWAGelesen, sendWALinkKnopf, terminSeite, offeneGespraecheMelden, inhaberNachliefern,
          inhaberHatGeschrieben, zustellungGescheitert, kiRufen,
          berechtigteNummern, fetchMitZeit, fehlerLog,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
@@ -507,17 +507,11 @@ async function beantworteKunde({ from, eintraege, profilName, start }) {
     // Warnhinweis, sondern als das, was es ist: schnelle Vorarbeit,
     // entschieden wird in der Werkstatt.
     (messages.length > 2 ? "" :
-    "\n\nDies ist die ERSTE Nachricht dieses Kunden. Ordne dich " +
-    "deshalb einmal kurz und beiläufig ein — in EINEM Halbsatz, " +
-    "mitten im Gespräch, nie als Hinweisblock und nie entschuldigend. " +
-    "Der Gedanke: Du bist der KI-Assistent des Betriebs, machst die " +
-    "Vorarbeit rund um die Uhr, und Einschätzung wie Termin gehen " +
-    "anschließend an die Werkstatt, die entscheidet. Beispiel: " +
-    "\"Hier ist Alex, der KI-Assistent der Autolackiererei in Britz — " +
-    "ich mache die Vorarbeit, entschieden wird dann in der Werkstatt. " +
-    "Schicken Sie mir gern ein Foto vom Schaden.\" Formuliere es " +
-    "selbst, nicht wörtlich abschreiben. Danach normal weiter und " +
-    "nie wiederholen.") +
+    "\n\nDies ist die ERSTE Nachricht dieses Kunden. Beginne mit einer kurzen Begrüßung passend zur Tageszeit " +
+    "und stell dich in einem Satz vor, zum Beispiel: \"Guten Abend, hier ist Alex, der KI-Assistent der Autolackiererei in Britz 👋\" " +
+    "Dann direkt zu seinem Anliegen, ohne weitere Erklärung. Den Hinweis, dass die Werkstatt Preis und Termin " +
+    "am Ende entscheidet, bringst du erst, wenn es zum ersten Mal um Preis oder Termin geht, und dann in einem Halbsatz. " +
+    "Das Emoji nur in diesem ersten Satz, danach keine mehr.") +
     (await ownerNotesBlock()) + (await gelerntBlock()) + (await akteKontext(from).catch(() => ""));
 
   const r = await kiAnfrage({ messages, zusatz });
@@ -545,11 +539,8 @@ async function beantworteKunde({ from, eintraege, profilName, start }) {
   // Bestaetigter Termin (alter Weg): Auf WhatsApp gibt es keine Karte mit
   // Knoepfen, deshalb eine antippbare Kalender-Adresse.
   const mOk = rohAntwort.match(RE_TERMIN_OK);
-  let kalenderZeile = "";
-  if (mOk) {
-    kalenderZeile = "\n\nIn den Kalender eintragen:\n" +
-      icsAdresse(mOk[1].trim(), mOk[2].trim(), mOk[3].trim());
-  }
+  let kalenderSeite = "";
+  if (mOk) kalenderSeite = terminSeite(mOk[1].trim(), "", mOk[2].trim(), mOk[3].trim());
 
   reply = markerRaus(reply);
   // Gedankenstriche und Ausrufezeichen entfernen (wirken maschinell)
@@ -595,12 +586,22 @@ async function beantworteKunde({ from, eintraege, profilName, start }) {
     name: ((mKB && mKB[1]) || "").trim(), tel: ((mKB && mKB[2]) || "").trim() || from,
     thema: text, fotos: mediaIds.length
   }).catch(e => { console.error("buchung", e && e.message); return null; });
-  if (bu && bu.ok) kalenderZeile = "\n\nIn den Kalender eintragen:\n" + bu.ics;
+  if (bu && bu.ok) kalenderSeite = bu.seite;
   else if (bu && bu.korrektur) reply += "\n\n" + bu.korrektur;
-  if (kalenderZeile) reply += kalenderZeile;
 
   // ---- ERST antworten, dann alles Weitere -------------------------------
-  await sendeMenschlich(from, reply);
+  // Termin bestaetigt: Text mit Knopf "📅 In den Kalender" statt einer
+  // langen Adresse. Klappt der Knopf nicht, kommt der Link als Text.
+  if (kalenderSeite) {
+    const mitKnopf = reply.length <= 1000 && await sendWALinkKnopf(from, reply, "📅 In den Kalender", kalenderSeite);
+    if (!mitKnopf) {
+      await sendeMenschlich(from, reply);
+      if (!(await sendWALinkKnopf(from, "Damit Sie den Termin nicht vergessen:", "📅 In den Kalender", kalenderSeite)))
+        await sendWhatsApp(from, "In den Kalender eintragen:\n" + kalenderSeite);
+    }
+  } else {
+    await sendeMenschlich(from, reply);
+  }
 
   // ---- Verlauf speichern ---------------------------------------
   await memSet(from, [...merk, { role: "assistant", content: hatteDaten ? rohAntwort : reply }].slice(-MAX_TURNS));

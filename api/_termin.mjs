@@ -28,6 +28,15 @@ export function icsAdresse(wann, titel, ort) {
          "&l=" + encodeURIComponent(ort);
 }
 
+// Kleine Seite auf der Website mit zwei Knoepfen: "Apple Kalender" (.ics)
+// und "Google Kalender". Google kann mit einer .ics-Datei auf dem Handy oft
+// nichts anfangen und braucht einen eigenen Link.
+export function terminSeite(wann, ende, titel, ort) {
+  const basis = (process.env.SITE_URL || "https://www.autolackiererei-britz.de").replace(/\/+$/, "");
+  return basis + "/termin?t=" + encodeURIComponent(wann) + (ende ? "&e=" + encodeURIComponent(ende) : "") +
+         "&s=" + encodeURIComponent(titel) + "&l=" + encodeURIComponent(ort);
+}
+
 export function markerRaus(text) {
   return String(text || "")
     .replace(/\[\[[A-Z_]+\|[^\]]*\]\]/g, "")
@@ -300,6 +309,32 @@ export async function sendWAKnoepfe(to, text, knoepfe) {
     await sendungMerken(id, { to, text: String(text).slice(0, 1024), knoepfe: k });
     return id;
   } catch (e) { console.error("knoepfe", e && e.message); return false; }
+}
+
+// ---- Nachricht mit Link-Knopf ----------------------------------------
+// Statt einer langen Adresse im Text sieht der Kunde nur einen Knopf.
+// Nur im 24-Stunden-Fenster. Knopftext hoechstens 20 Zeichen.
+export async function sendWALinkKnopf(to, text, knopf, url) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) return false;
+  try {
+    const r = await fetchMitZeit(`${GRAPH}/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp", recipient_type: "individual", to,
+        type: "interactive",
+        interactive: {
+          type: "cta_url",
+          body: { text: String(text).slice(0, 1024) },
+          action: { name: "cta_url", parameters: { display_text: String(knopf).slice(0, 20), url } }
+        }
+      })
+    }, NETZ_ZEITLIMIT_MS);
+    if (!r.ok) { console.error("linkknopf", r.status, await r.text().catch(() => "")); return false; }
+    const id = await kennungAus(r);
+    await sendungMerken(id, { to, text: String(text).slice(0, 1024) + "\n" + url });
+    return id;
+  } catch (e) { console.error("linkknopf", e && e.message); return false; }
 }
 
 // ---- "Gelesen" + "schreibt ..." --------------------------------------

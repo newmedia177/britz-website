@@ -71,7 +71,8 @@ global.fetch = async (u, o = {}) => {
     }
     const id = "wamid." + (++wamid);
     gesendet.push({ an: b.to === DIRK ? "dirk" : "kunde", nr: b.to, typ: b.type, id,
-      knoepfe: b.interactive ? b.interactive.action.buttons.map(x => x.reply) : null,
+      knoepfe: b.interactive && b.interactive.action.buttons ? b.interactive.action.buttons.map(x => x.reply) : null,
+      link: b.interactive && b.interactive.type === "cta_url" ? b.interactive.action.parameters : null,
       text: b.text?.body || b.interactive?.body?.text || (b.template ? "[Vorlage " + b.template.name + "]" : "[Bild " + (b.image?.caption || "") + "]") });
     return { ok: true, json: async () => ({ messages: [{ id }] }), text: async () => "" };
   }
@@ -590,6 +591,25 @@ reset(); uhr("2026-11-16T15:00:00Z");
 sp["unzugestellt:" + DIRK] = JSON.stringify([{ text: "💬 unbekannt · Website\nKunde: Öffnungszeiten?", ts: 1 }, { text: "🆕 Nr. 3 · Echt", akteNr: 3, ts: 2 }]);
 gesendet = []; kiAntwort = "Moin."; await waNachricht(DIRK, "Moin");
 pruefe("alte Mitlese-Ausschnitte werden nicht nachgeliefert, echte Karten schon", !gesendet.some(g => /💬 unbekannt/.test(g.text)) && gesendet.some(g => /Nr\. 3 · Echt/.test(g.text)));
+
+// ---- 18. Terminbestätigung auf WhatsApp: Knopf statt langer Adresse ----------
+log("\n18. Kalender-Knopf und erste Nachricht");
+reset(); uhr("2026-11-16T09:00:00Z");
+kiAntwort = "Hier ist Alex, der KI-Assistent der Autolackiererei in Britz 👋 Worum geht es?"; await waNachricht(KUNDE, "Hallo");
+pruefe("erste Nachricht: kurze Vorstellung, Hinweis zur Werkstatt erst bei Preis/Termin", /KI-Assistent der Autolackiererei in Britz 👋/.test(kiSystem) && /erst, wenn es zum ersten Mal um Preis oder Termin geht/.test(kiSystem));
+kiAntwort = "Ihr Termin steht: Donnerstag, 19.11., 14 bis 17 Uhr, Haarlemer Straße 48-54. Bis dann. [[KONTAKT|Test|" + KUNDE + "]]\n[[BUCHUNG|2026-11-19|14-17|begutachtung]]";
+gesendet = []; await waNachricht(KUNDE, "Donnerstag 14 bis 17 passt");
+const best = gesendet.find(g => g.an === "kunde" && g.link);
+if (process.env.ZEIGE) log(">>> " + JSON.stringify(best));
+pruefe("Bestätigung kommt mit Knopf '📅 In den Kalender', ohne Adresse im Text", best && best.link.display_text === "📅 In den Kalender" && best.link.display_text.length <= 20 && !/https?:/.test(best.text));
+pruefe("Knopf führt auf die Termin-Seite mit Beginn und Ende", best && /\/termin\?t=2026-11-19T14%3A00&e=2026-11-19T17%3A00/.test(best.link.url));
+const echt3 = global.fetch;
+global.fetch = async (u, o) => String(u).includes("/messages") && o && o.body && JSON.parse(o.body).interactive && JSON.parse(o.body).interactive.type === "cta_url" ? { ok: false, status: 400, text: async () => "nein" } : echt3(u, o);
+reset(); uhr("2026-11-16T09:00:00Z"); kiAntwort = "Ihr Termin steht. [[KONTAKT|Test|" + KUNDE + "]]\n[[BUCHUNG|2026-11-19|8-10|begutachtung]]";
+await waNachricht(KUNDE, "Donnerstag 8 bis 10");
+global.fetch = echt3;
+pruefe("Knopf abgelehnt: Link kommt als Text, Termin geht nicht unter", gesendet.some(g => g.an === "kunde" && /Ihr Termin steht/.test(g.text)) && gesendet.some(g => g.an === "kunde" && /\/termin\?t=/.test(g.text)));
+pruefe("Prompt: ohne FIN nicht blockieren, keine Datenschutz-Zeile in der Bestätigung", /OHNE FAHRGESTELLNUMMER NICHT BLOCKIEREN/.test(kiSystem) && /Einen Datenschutz-Satz oder Link hängst du NICHT an die Terminbestätigung/.test(kiSystem));
 
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));

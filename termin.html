@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Termin eintragen · Autolackiererei in Britz</title>
+<meta name="description" content="Ihren Termin bei der Autolackiererei in Britz in den Kalender eintragen.">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/img/apple-touch-icon.png">
+<meta name="theme-color" content="#f7f3ec">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!--
+  Seite hinter dem WhatsApp-Knopf "In den Kalender".
+  WhatsApp zeigt Links im Text immer als lange Adresse. Deshalb schickt
+  Alex nur einen Knopf, und der fuehrt hierher. Zwei Wege, weil Google
+  Kalender auf dem Handy mit einer .ics-Datei oft nichts anfaengt:
+    Apple / Outlook / andere -> /api/ics (Kalenderdatei)
+    Google                   -> calendar.google.com mit fertigem Eintrag
+  Parameter: t = Beginn (Berliner Zeit, JJJJ-MM-TTTHH:MM), e = Ende (optional),
+             s = Titel, l = Ort
+-->
+<style>
+  :root {
+    --grund: #f7f3ec; --karte: #ffffff; --text: #211d17; --leise: #57524a;
+    --akzent: #855a02; --gelb: #f2ab00; --linie: rgba(31,26,18,0.12);
+    --knopf: #211d17; --knopf-text: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --grund: #171512; --karte: #211e1a; --text: #f3efe8; --leise: #bdb6aa;
+      --akzent: #f2c25a; --gelb: #f2ab00; --linie: rgba(255,255,255,0.12);
+      --knopf: #f3efe8; --knopf-text: #171512;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--grund); color: var(--text);
+    font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  main { width: 100%; max-width: 420px; }
+  .marke { display: flex; align-items: center; gap: 10px; color: var(--akzent);
+    font-weight: 700; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; margin: 0 0 18px; }
+  .marke::before { content: ""; width: 28px; height: 2px; background: var(--gelb); border-radius: 2px; }
+  .karte { background: var(--karte); border: 1px solid var(--linie); border-radius: 18px; padding: 26px 22px; }
+  h1 { font-family: Anton, sans-serif; font-weight: 400; text-transform: uppercase;
+    font-size: 30px; line-height: 1.15; margin: 0 0 18px; letter-spacing: -.005em; }
+  dl { margin: 0 0 24px; display: grid; gap: 12px; }
+  dt { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--leise); }
+  dd { margin: 2px 0 0; font-size: 17px; line-height: 1.45; }
+  .knopf { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+    min-height: 54px; border-radius: 14px; font: 600 17px/1 "DM Sans", sans-serif; text-decoration: none;
+    margin-top: 10px; border: 1.5px solid var(--knopf); }
+  .knopf.voll { background: var(--knopf); color: var(--knopf-text); }
+  .knopf.leer { background: transparent; color: var(--text); }
+  .knopf svg { width: 20px; height: 20px; flex: none; }
+  .hinweis { font-size: 14px; line-height: 1.5; color: var(--leise); margin: 18px 0 0; }
+  .hinweis a { color: var(--akzent); font-weight: 600; }
+  .fehler { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <p class="marke">Autolackiererei in Britz</p>
+  <div class="karte" id="karte">
+    <h1>Ihr Termin</h1>
+    <dl>
+      <div><dt>Wann</dt><dd id="wann">…</dd></div>
+      <div><dt>Wo</dt><dd id="wo">…</dd></div>
+      <div><dt>Worum es geht</dt><dd id="was">…</dd></div>
+    </dl>
+    <a class="knopf voll" id="apple" href="#">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.3 1.88-3.4 1.96-3.46-1.07-1.56-2.73-1.78-3.32-1.8-1.41-.14-2.76.83-3.48.83-.72 0-1.83-.81-3-.79-1.55.02-2.97.9-3.77 2.28-1.61 2.79-.41 6.92 1.16 9.18.77 1.1 1.68 2.35 2.88 2.3 1.16-.05 1.6-.75 3-.75s1.79.75 3.01.72c1.24-.02 2.03-1.12 2.79-2.23.88-1.28 1.24-2.52 1.26-2.59-.03-.01-2.42-.93-2.44-3.69zM14.1 5.86c.64-.78 1.07-1.85.95-2.92-.92.04-2.03.61-2.69 1.38-.59.68-1.11 1.77-.97 2.82 1.03.08 2.07-.52 2.71-1.28z"/></svg>
+      Apple Kalender
+    </a>
+    <a class="knopf leer" id="google" href="#" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.5 12.27c0-.79-.07-1.54-.19-2.27H12v4.3h5.9a5.05 5.05 0 0 1-2.19 3.31v2.75h3.54c2.07-1.91 3.25-4.72 3.25-8.09z"/><path fill="#34A853" d="M12 23c2.96 0 5.45-.98 7.26-2.65l-3.54-2.75c-.98.66-2.24 1.05-3.72 1.05-2.86 0-5.29-1.93-6.15-4.53H2.2v2.84A10.99 10.99 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.85 14.12A6.6 6.6 0 0 1 5.5 12c0-.74.13-1.45.35-2.12V7.04H2.2A10.99 10.99 0 0 0 1 12c0 1.78.43 3.46 1.2 4.96l3.65-2.84z"/><path fill="#EA4335" d="M12 5.35c1.61 0 3.06.55 4.2 1.64l3.14-3.14C17.45 2.09 14.96 1 12 1 7.7 1 3.99 3.47 2.2 7.04l3.65 2.84C6.71 7.28 9.14 5.35 12 5.35z"/></svg>
+      Google Kalender
+    </a>
+    <p class="hinweis">Andere Kalender (Outlook, Samsung) nehmen meist den oberen Knopf.<br>
+      Etwas ändern? Schreiben Sie uns einfach auf WhatsApp oder rufen Sie an:
+      <a href="tel:+493060797930">030 607 97 930</a></p>
+  </div>
+  <div class="karte fehler" id="fehler">
+    <h1>Kein Termin gefunden</h1>
+    <p class="hinweis" style="margin-top:0">Der Link ist unvollständig. Ihr Termin steht trotzdem fest.
+      Fragen Sie gern auf WhatsApp nach oder rufen Sie an: <a href="tel:+493060797930">030 607 97 930</a></p>
+  </div>
+</main>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var t = q.get("t") || "", e = q.get("e") || "", s = q.get("s") || "Termin, Autolackiererei in Britz",
+      l = q.get("l") || "Haarlemer Straße 48-54, 12359 Berlin";
+  var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(t);
+  if (!m) { document.getElementById("karte").style.display = "none"; document.getElementById("fehler").style.display = "block"; return; }
+
+  // Berliner Ortszeit -> UTC (beruecksichtigt Sommer- und Winterzeit)
+  function nachUtc(teile) {
+    var guess = Date.UTC(+teile[1], +teile[2] - 1, +teile[3], +teile[4], +teile[5]);
+    var p = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Berlin", hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+      .formatToParts(new Date(guess)).reduce(function (o, x) { o[x.type] = x.value; return o; }, {});
+    var alsBerlin = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+    return new Date(guess - (alsBerlin - guess));
+  }
+  var beginn = nachUtc(m);
+  var me = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(e);
+  var ende = me ? nachUtc(me) : new Date(beginn.getTime() + 60 * 60 * 1000);
+  function utc(x) { return x.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z"; }
+
+  var tag = new Intl.DateTimeFormat("de-DE", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Berlin" }).format(beginn);
+  var uhr = function (x) { return new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }).format(x); };
+  document.getElementById("wann").textContent = tag + ", " + uhr(beginn) + (me ? " bis " + uhr(ende) : "") + " Uhr";
+  document.getElementById("wo").textContent = l;
+  document.getElementById("was").textContent = s.replace(/, Autolackiererei in Britz$/, "");
+
+  document.getElementById("apple").href = "/api/ics?t=" + encodeURIComponent(t) +
+    "&s=" + encodeURIComponent(s) + "&l=" + encodeURIComponent(l);
+  document.getElementById("google").href = "https://calendar.google.com/calendar/render?action=TEMPLATE" +
+    "&text=" + encodeURIComponent(s) + "&dates=" + utc(beginn) + "/" + utc(ende) +
+    "&location=" + encodeURIComponent(l) +
+    "&details=" + encodeURIComponent("Bestätigter Termin. Rückfragen: 030 607 97 930");
+})();
+</script>
+</body>
+</html>
