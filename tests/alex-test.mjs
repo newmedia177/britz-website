@@ -16,7 +16,8 @@ process.env.WA_SAMMELN_MS = "0";          // im Test nicht auf weitere Nachricht
 
 const DIRK = "491700000001", KUNDE = "4917612345678";
 let kiSystem = "", sp = {}, gesendet = [], fensterOffen = true, kiAntwort = "Gern.", kiStrom = null, kiFolge = [];
-let denkAntwort = "", denkFragen = [], kiAnfragen = 0, wamid = 0, gelesen = [], kiNutzer = "";   // _denken.mjs: Antwort der "rechten Hand"
+let denkAntwort = "", denkFragen = [], kiAnfragen = 0, wamid = 0, gelesen = [], kiNutzer = "";
+let spaetGescheitert = [], kundeFensterZu = false, kiThinking = null, kiThinkingAbgelehnt = false;   // _denken.mjs: Antwort der "rechten Hand"
 const enc = new TextEncoder();
 
 global.fetch = async (u, o = {}) => {
@@ -34,7 +35,7 @@ global.fetch = async (u, o = {}) => {
     if (c === "EXPIRE") return r(1);
     return r(null);
   }
-  if (u.includes("resend")) { gesendet.push({ an: "mail", text: JSON.parse(o.body).subject }); return { ok: true, text: async () => "" }; }
+  if (u.includes("resend")) { const m = JSON.parse(o.body); gesendet.push({ an: "mail", text: m.subject + "\n" + m.text }); return { ok: true, text: async () => "" }; }
   if (u.includes("anthropic")) {
     const body = JSON.parse(o.body);
     if (body.stream) {
@@ -49,7 +50,9 @@ global.fetch = async (u, o = {}) => {
       denkFragen.push(body.messages[0].content);
       return { ok: true, json: async () => ({ content: denkAntwort ? [{ type: "text", text: denkAntwort }] : [], stop_reason: "end_turn" }) };
     }
+    if (kiThinkingAbgelehnt && body.thinking) return { ok: false, status: 400, clone() { return this; }, text: async () => "thinking.type: unsupported value" };
     kiAnfragen++;
+    kiThinking = body.thinking || null;
     kiSystem = JSON.stringify(body.system || "");
     kiNutzer = typeof body.messages?.[0]?.content === "string" ? body.messages[0].content : "";
     const t = kiFolge.length ? kiFolge.shift() : kiAntwort;
@@ -58,7 +61,14 @@ global.fetch = async (u, o = {}) => {
   if (u.includes("/messages")) {
     const b = JSON.parse(o.body);
     if (b.status === "read") { gelesen.push(b.message_id); return { ok: true, json: async () => ({}), text: async () => "" }; }
-    if (b.to === DIRK && b.type !== "template" && !fensterOffen) return { ok: false, status: 400, text: async () => "131047" };
+    // So verhaelt sich WhatsApp wirklich: Ausserhalb des 24-Stunden-
+    // Fensters wird eine freie Nachricht ERST ANGENOMMEN (200 mit Kennung)
+    // und das Scheitern kommt spaeter per Webhook (Code 131047).
+    if (b.type !== "template" && ((b.to === DIRK && !fensterOffen) || (b.to !== DIRK && kundeFensterZu))) {
+      const sid = "wamid.x" + (++wamid);
+      spaetGescheitert.push(sid);
+      return { ok: true, json: async () => ({ messages: [{ id: sid }] }), text: async () => "" };
+    }
     const id = "wamid." + (++wamid);
     gesendet.push({ an: b.to === DIRK ? "dirk" : "kunde", nr: b.to, typ: b.type, id,
       knoepfe: b.interactive ? b.interactive.action.buttons.map(x => x.reply) : null,
@@ -70,7 +80,7 @@ global.fetch = async (u, o = {}) => {
 
 const R = Date;
 const uhr = iso => { global.Date = class extends R { constructor(...a) { if (a.length) super(...a); else super(iso); } static now() { return new R(iso).getTime(); } }; };
-const reset = () => { sp = {}; gesendet = []; fensterOffen = true; kiAntwort = "Gern."; kiStrom = null; kiFolge = []; denkAntwort = ""; denkFragen = []; kiAnfragen = 0; gelesen = []; };
+const reset = () => { spaetGescheitert = []; kundeFensterZu = false; kiThinkingAbgelehnt = false; sp = {}; gesendet = []; fensterOffen = true; kiAntwort = "Gern."; kiStrom = null; kiFolge = []; denkAntwort = ""; denkFragen = []; kiAnfragen = 0; gelesen = []; };
 
 const stumm = console.error; console.error = () => {};
 const log = console.log; console.log = () => {};
@@ -94,6 +104,13 @@ const waNachricht = (von, text, typ = "text", bezug = "") => wa({ method: "POST"
       : typ === "knopf" ? { type: "interactive", interactive: { type: "button_reply", button_reply: { id: text, title: "Knopf" } } }
       : typ === "bild" ? { type: "image", image: { id: "foto" + mid, caption: text } }
       : { type: "text", text: { body: text } }) }] } }] }] } }, res());
+// WhatsApp meldet nachtraeglich: diese Nachrichten kamen nicht an
+const whatsappMeldetFehler = async () => {
+  const ids = spaetGescheitert.splice(0);
+  for (const id of ids) await wa({ method: "POST", query: {}, headers: {}, body: { entry: [{ changes: [{ value: {
+    statuses: [{ id, status: "failed", recipient_id: "x", errors: [{ code: 131047, title: "Re-engagement message" }] }] } }] }] } }, res());
+  return ids.length;
+};
 const buche = (s, d, f, art = "begutachtung", ort = "") => B.buchungVerarbeiten({ antwort: "Steht. [[KONTAKT|Kunde " + s + "|0176 1" + s + "]]\n[[BUCHUNG|" + d + "|" + f + "|" + art + (ort ? "|" + ort : "") + "]]", kanal: "web", sitzung: "s" + s, thema: "Delle" });
 
 // ---- 1. Web-Chat: nie eine leere Blase -------------------------------
@@ -131,16 +148,36 @@ pruefe("Begutachtung Kleinmachnow -> Britz", (await buche("k", "2026-09-24", "11
 log("\n3. Zustellung an Dirk");
 reset(); uhr("2026-10-22T09:00:00Z"); delete process.env.WA_VORLAGE_INHABER; fensterOffen = false;
 await buche("m", "2026-10-23", "8-10");
-pruefe("ohne Vorlage + Fenster zu -> E-Mail", gesendet.some(g => g.an === "mail" && /Neuer Termin/.test(g.text)));
+pruefe("WhatsApp nimmt erst an (wie in echt), noch keine Mail", !gesendet.some(g => g.an === "mail"));
+await whatsappMeldetFehler();
+pruefe("WhatsApp meldet 'nicht zugestellt' -> E-Mail", gesendet.some(g => g.an === "mail" && /Neuer Termin/.test(g.text)));
 gesendet = []; fensterOffen = true; await waNachricht(DIRK, "Hallo");
 pruefe("Dirk schreibt -> Liegengebliebenes kommt", gesendet.some(g => g.an === "dirk" && /Liegengeblieben/.test(g.text)));
 pruefe("kein falsches 'nichts Offenes'", !gesendet.some(g => /nichts Offenes/.test(g.text)));
 reset(); process.env.WA_VORLAGE_INHABER = "kundenmeldung_alex"; fensterOffen = false;
-await buche("n", "2026-10-23", "11-13"); await buche("o", "2026-10-23", "14-15");
+await buche("n", "2026-10-23", "11-13"); await whatsappMeldetFehler(); await buche("o", "2026-10-23", "14-15");
+pruefe("nach dem ersten Scheitern weiß Alex: Fenster zu, versucht es nicht mehr frei", spaetGescheitert.length === 0);
 pruefe("mit Vorlage: genau ein Anstupser", gesendet.filter(g => g.typ === "template").length === 1);
 gesendet = []; fensterOffen = true; await waNachricht(DIRK, "Alles anzeigen", "button");
 pruefe("Tipp 'Alles anzeigen' liefert beide", gesendet.filter(g => /Liegengeblieben/.test(g.text)).length === 2);
 delete process.env.WA_VORLAGE_INHABER;
+// Der Fall vom 16.11.: Dirk hat am Freitag zuletzt geschrieben, Montag 8 Uhr kommt der Überblick
+reset(); uhr("2026-11-13T10:00:00Z"); kiAntwort = "Moin."; await waNachricht(DIRK, "Moin");
+uhr("2026-11-16T07:05:00Z"); fensterOffen = false; gesendet = [];
+await A.weckerAufgaben();
+pruefe("16.11.: Fenster bekannt zu -> Überblick gar nicht erst frei versucht", spaetGescheitert.length === 0);
+pruefe("16.11.: Überblick kommt per E-Mail und liegt bereit", gesendet.some(g => g.an === "mail" && /Guten Morgen/.test(g.text)) && /Guten Morgen/.test(sp["unzugestellt:" + DIRK] || ""));
+fensterOffen = true; gesendet = []; await waNachricht(DIRK, "Status");
+pruefe("16.11.: Dirk schreibt -> Überblick kommt auf WhatsApp", gesendet.some(g => g.an === "dirk" && /Liegengeblieben/.test(g.text) && /Guten Morgen/.test(g.text)));
+pruefe("Status zeigt Dirks letzten Kontakt und das Modell", gesendet.some(g => /Dein letzter Kontakt mit Alex: gerade eben/.test(g.text) && /ohne Vorab-Nachdenken/.test(g.text)));
+// Viele Meldungen bei geschlossenem Fenster: eine Mail, nicht zehn
+reset(); uhr("2026-11-16T09:00:00Z"); sp["inhaber:fenster:" + DIRK] = String(Date.now() - 30 * 3600000); fensterOffen = false;
+for (let i = 0; i < 4; i++) await T.zustellenAnInhaber("Meldung " + i, { kurz: "Meldung " + i });
+pruefe("4 Meldungen bei zu: nur eine Mail in der Stunde", gesendet.filter(g => g.an === "mail").length === 1);
+uhr("2026-11-16T10:05:00Z"); delete sp["mailsperre:" + DIRK];   // (Sperre laeuft nach einer Stunde ab)
+await T.zustellenAnInhaber("Meldung 5", { kurz: "Meldung 5" });
+const sammel = gesendet.filter(g => g.an === "mail").pop();
+pruefe("nächste Mail enthält alles Liegengebliebene", gesendet.filter(g => g.an === "mail").length === 2 && /Meldung 1/.test(sammel.text) && /Meldung 5/.test(sammel.text));
 
 // ---- 4. WhatsApp-Kunde, Mitlesen, Uebernahme ------------------------------
 log("\n4. WhatsApp");
@@ -424,7 +461,7 @@ log("\n14. Randfälle");
 // a) Dirk hat 24 Std. nichts geschrieben: Karte wird aufgehoben, kommt mit Knöpfen nach
 reset(); uhr("2026-11-16T08:00:00Z"); fensterOffen = false;
 kiAntwort = "Danke. [[KVA|Selbstzahler|Golf|1 Bild]]"; denkAntwort = LAGE();
-await waNachricht(KUNDE, "Kratzer", "bild");
+await waNachricht(KUNDE, "Kratzer", "bild"); await whatsappMeldetFehler();
 pruefe("Dirks Fenster zu: Karte liegt bereit, E-Mail als Notweg", JSON.parse(sp["unzugestellt:" + DIRK] || "[]").some(e => e.akteNr === 1 && e.knoepfe) && gesendet.some(g => g.an === "mail"));
 fensterOffen = true; gesendet = []; kiAntwort = "Moin."; await waNachricht(DIRK, "Moin");
 const nachl = gesendet.find(g => g.an === "dirk" && /Liegengeblieben/.test(g.text));
@@ -486,6 +523,29 @@ rw = res(); await chat({ method: "POST", body: { sitzung: "web9", nachhaken: tru
 pruefe("auch im Website-Chat nicht", sichtbar(rw) === "" && rw.ende);
 await waNachricht(DIRK, "Nachhaken an"); gesendet = []; await A.weckerAufgaben();
 pruefe("'Nachhaken an': es geht wieder", gesendet.some(g => g.an === "kunde" && /Foto reicht erst mal/.test(g.text)));
+
+// ---- 15. KI ohne Vorab-Nachdenken, Kundennachricht kam nicht an ---------
+log("\n15. KI-Einstellung und nachträgliche Fehler");
+reset(); uhr("2026-11-16T09:00:00Z"); process.env.CLAUDE_MODEL = "claude-sonnet-5";
+kiAntwort = "Gern."; await waNachricht(KUNDE, "Hallo");
+pruefe("Sonnet 5: Vorab-Nachdenken aus (sonst frisst es die Antwort)", kiThinking && kiThinking.type === "disabled");
+process.env.CLAUDE_MODEL = "claude-sonnet-5-5"; await waNachricht(KUNDE, "Noch was");
+pruefe("Sonnet 5.5: richtige Einstellung (between_tools)", kiThinking && kiThinking.type === "between_tools");
+kiThinkingAbgelehnt = true; process.env.CLAUDE_MODEL = "claude-sonnet-5"; gesendet = [];
+await waNachricht(KUNDE, "Und jetzt?");
+pruefe("lehnt ein Modell die Einstellung ab: zweiter Versuch ohne, Kunde bekommt Antwort", gesendet.some(g => g.an === "kunde" && /Gern/.test(g.text)) && kiThinking === null);
+delete process.env.CLAUDE_MODEL; kiThinkingAbgelehnt = false;
+// Angebot an einen Kunden, dessen WhatsApp schon zu ist
+reset(); uhr("2026-11-16T09:00:00Z");
+sp["anfragen"] = JSON.stringify([{ nr: 4, sitzung: "wa:" + KUNDE, kanal: "whatsapp", kundeNr: KUNDE, name: "Herr Bauer", status: "neu", ts: Date.now() - 2 * 86400000,
+  letzterKontakt: Date.now() - 20 * 3600000, verlauf: [], fotos: 2, kvaTs: Date.now() - 2 * 86400000, karteTs: Date.now() }]);
+kundeFensterZu = true; gesendet = [];
+const antw = await A.anfrageBefehl("Angebot 4: 520 Euro, Tür hinten links", DIRK);
+pruefe("Angebot: WhatsApp nimmt erst an, Alex meldet 'geschickt'", spaetGescheitert.length === 1 && /Angebot/.test(String(antw)));
+gesendet = []; await whatsappMeldetFehler();
+const warn = gesendet.find(g => g.an === "dirk" && /kam NICHT an/.test(g.text));
+pruefe("WhatsApp meldet Scheitern: Dirk bekommt sofort Bescheid, mit Nummer und Text", warn && /Herr Bauer/.test(warn.text) && /\+49 176 12345678/.test(warn.text) && /520 Euro/.test(warn.text));
+pruefe("Akte vermerkt es, Alex hält den Kunden für nicht mehr erreichbar", akte(4).verlauf.some(v => /NICHT angekommen/.test(v)) && !/Vorbeikommen/.test(JSON.stringify(warn.knoepfe)));
 
 global.Date = R;
 log("\n" + ok + " von " + n + " bestanden" + (ok === n ? "" : "  <-- NICHT deployen"));

@@ -11,7 +11,7 @@
 // Fotos werden nie gespeichert. Aufbewahrung LERN_TAGE Tage.
 
 import { jsonLesen, jsonSchreiben, redis, zustellenAnInhaber, meldenOderAufheben,
-         istRuhezeit, fetchMitZeit, fehlerLog, statLesen } from "./_termin.mjs";
+         istRuhezeit, kiRufen, fehlerLog } from "./_termin.mjs";
 
 export const LERN_INTERVALL = 10;   // neue Gespraeche bis zur naechsten Runde
 export const LERN_TAGE = 14;        // Aufbewahrung anonymisierter Gespraeche
@@ -163,25 +163,17 @@ export async function lernrunde() {
 
   let ergebnis = null, grund = "";
   try {
-    const r = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL_DENKEN || process.env.CLAUDE_MODEL || "claude-sonnet-5",
-        max_tokens: 1800,
-        system: RUBRIK,
-        messages: [{ role: "user", content: text.slice(0, 60000) }]
-      })
+    const r = await kiRufen({
+      model: process.env.CLAUDE_MODEL_DENKEN || process.env.CLAUDE_MODEL || "claude-sonnet-5",
+      max_tokens: 3000,
+      system: RUBRIK,
+      messages: [{ role: "user", content: text.slice(0, 60000) }]
     }, 45000);
     if (!r.ok) grund = "KI antwortet mit Fehler " + r.status;
     else {
       const j = await r.json();
       ergebnis = jsonAus((j.content || []).filter(c => c.type === "text").map(c => c.text).join(""));
-      if (!ergebnis) grund = "Antwort der KI war nicht lesbar";
+      if (!ergebnis) grund = "Antwort der KI war nicht lesbar (stop_reason=" + (j.stop_reason || "?") + ", Blöcke=" + (j.content || []).map(c => c.type).join(",") + ")";
     }
   } catch (e) {
     grund = "Zeitlimit oder Netzfehler (" + (e && e.name) + ")";

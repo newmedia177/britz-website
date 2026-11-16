@@ -16,7 +16,7 @@ import { SYSTEM, KNOWLEDGE } from "./_bundle.mjs";
 import { gespraechAblegen, gelerntBlock, lernBefehl, lernKennung } from "./_lernen.mjs";
 import { anfrageBefehl, anfrageFortschreiben, akteKontext, fehlerZaehlen, weckerAufgaben, chefUeberblick, nachhakenAktiv,
          chefAkteKontext, nummerImText, karteAktion, antwortAufKarte, entwurfSenden, akteHolenOderAnlegen,
-         akteFinden, akteAendern, gespraechAnhaengen, herzschlag } from "./_anfragen.mjs";
+         akteFinden, akteAendern, gespraechAnhaengen, herzschlag, kundenZustellungGescheitert } from "./_anfragen.mjs";
 import { buchungBefehl, buchungVerarbeiten, buchungKontext, RE_BUCHUNG } from "./_buchung.mjs";
 import { spiegeln, kundeInUebernahme, uebernahmeKunde, uebernahmeBefehl, anUebernehmer } from "./_mitlesen.mjs";
 import { logGapIfNeeded, saeubern, zeitKontext, RUECKMELDUNG } from "./chat.js";
@@ -24,6 +24,7 @@ import { meldeTermin, inhaberAntwort, terminListe, markerRaus,
          RE_TERMIN_OK, icsAdresse, belegteZeiten,
          warteschlangeZustellen, RE_KONTAKT, RE_KVA, RE_TERMIN,
          sendWA, sendWAKnoepfe, sendWAGelesen, offeneGespraecheMelden, inhaberNachliefern,
+         inhaberHatGeschrieben, zustellungGescheitert, kiRufen,
          berechtigteNummern, fetchMitZeit, fehlerLog,
          jsonLesen, jsonSchreiben, redis, datumLesbar,
          terminLoeschen,
@@ -120,10 +121,17 @@ async function verarbeite(req, start) {
   const msg = value?.messages?.[0];
 
   if (!msg) {
-    // Status-Events (zugestellt/gelesen) ignorieren – aber sichtbar machen,
-    // damit man in den Logs sieht, was tatsächlich hereinkommt.
-    console.log("whatsapp: kein messages-Event",
-      JSON.stringify(Object.keys(value || {})));
+    // Status-Meldungen von WhatsApp. "zugestellt" und "gelesen" brauchen
+    // wir nicht. "failed" schon: WhatsApp nimmt eine Nachricht ausserhalb
+    // des 24-Stunden-Fensters erst an und meldet das Scheitern erst hier.
+    for (const s of (value?.statuses || [])) {
+      if (s.status !== "failed") continue;
+      const fehler = (s.errors && s.errors[0]) || {};
+      try {
+        const kunde = await zustellungGescheitert(s.id, fehler.code || "?", fehler.title || fehler.message || "");
+        if (kunde) await kundenZustellungGescheitert(kunde);
+      } catch (e) { console.error("status failed", e && e.message); }
+    }
     return;
   }
 
@@ -171,6 +179,8 @@ async function verarbeite(req, start) {
 // Dirk (oder Julian) schreibt
 // ======================================================================
 async function verarbeiteInhaber({ from, text, mediaId, knopf, bezug, start }) {
+  // Dirk hat geschrieben: Sein 24-Stunden-Fenster ist offen.
+  await inhaberHatGeschrieben(from).catch(() => {});
   // Dirk schreibt oder tippt: Das 24-Stunden-Fenster ist jetzt offen,
   // also kommt alles Liegengebliebene sofort.
   const nachgeliefert = await inhaberNachliefern(from).catch(() => 0);
@@ -329,23 +339,15 @@ async function verarbeiteInhaber({ from, text, mediaId, knopf, bezug, start }) {
 async function kiAnfrage({ messages, zusatz, max = 900 }) {
   let r;
   try {
-    r = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
-        max_tokens: max,
-        system: [{
-          type: "text",
-          text: SYSTEM + "\n\n<wissensbasis>\n" + KNOWLEDGE + "\n</wissensbasis>",
-          cache_control: { type: "ephemeral" }
-        }, { type: "text", text: zusatz }],
-        messages
-      })
+    r = await kiRufen({
+      model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
+      max_tokens: max,
+      system: [{
+        type: "text",
+        text: SYSTEM + "\n\n<wissensbasis>\n" + KNOWLEDGE + "\n</wissensbasis>",
+        cache_control: { type: "ephemeral" }
+      }, { type: "text", text: zusatz }],
+      messages
     }, 25000);
   } catch (e) {
     return { ok: false, grund: "Zeitlimit 25 s", text: "" };
@@ -705,6 +707,14 @@ async function memSet(key, value) {
 }
 
 // ---- Lern-Modus: Inhaber kann Alex per WhatsApp Wissen geben --
+// Wann schrieb diese Inhaber-Nummer zuletzt? (Das WhatsApp-Fenster)
+async function letzterKontaktText(n) {
+  const w = Number(await redis("GET", "inhaber:fenster:" + n)) || 0;
+  if (!w) return "unbekannt";
+  const std = Math.round((Date.now() - w) / 3600000);
+  return std < 1 ? "gerade eben" : "vor " + std + " Std." + (std >= 24 ? " (WhatsApp zu, Meldungen warten oder kommen per E-Mail)" : "");
+}
+
 function isOwner(num) {
   return berechtigteNummern().includes(String(num).replace(/\D/g, ""));
 }
@@ -845,6 +855,8 @@ async function handleOwnerCommand(from, text) {
       "Vorlage für Meldungen: " + (process.env.WA_VORLAGE_INHABER ? process.env.WA_VORLAGE_INHABER : "FEHLT (Meldungen kommen nur, wenn du in den letzten 24 Std. geschrieben hast)") + "\n" +
       "Vorlage Tagesstart: " + (process.env.WA_VORLAGE_TAGESSTART || "keine eigene (nutzt die für Meldungen)") + "\n" +
       "E-Mail-Notweg: " + (process.env.RESEND_API_KEY ? "an " + (process.env.NOTFALL_MAIL || "schaden@alb.berlin") : "AUS") + "\n\n" +
+      "Dein letzter Kontakt mit Alex: " + await letzterKontaktText(from) + "\n\n" +
+      "KI-Modell: " + (process.env.CLAUDE_MODEL || "claude-sonnet-5") + " (ohne Vorab-Nachdenken)\n" +
       "Nachhaken bei stillen Kunden: " + ((await nachhakenAktiv()) ? "an" : "AUS") + "\n" +
       "Wecker (alle 15 Min.): " + weckerText + "\n" +
       "Letzte Lernrunde: " + (lernStand ? lernStand.d : "noch keine") + " · offene Vorschläge: " + lernOffen + "\n" +

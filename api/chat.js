@@ -16,7 +16,7 @@ import { meldeTermin, jsonLesen, jsonSchreiben, speicherUrl,
          medienHochladen, RE_KONTAKT, belegteZeiten,
          warteschlangeZustellen, istRuhezeit, RUHE_VON, RUHE_BIS,
          fetchMitZeit, markerRaus, RE_KVA, RE_TERMIN, statPlus,
-         gespraechMerken, offeneGespraecheMelden } from "./_termin.mjs";
+         gespraechMerken, offeneGespraecheMelden, kiRufen } from "./_termin.mjs";
 
 export const config = { maxDuration: 60 };
 
@@ -132,16 +132,9 @@ export default async function handler(req, res) {
 
   let upstream;
   try {
-    upstream = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
+    upstream = await kiRufen({
         model: process.env.CLAUDE_MODEL || "claude-sonnet-5",
-        max_tokens: 700,
+        max_tokens: 900,
         // System-Prompt + komplette Wissensbasis, mit Prompt-Caching:
         // der große Block wird gecacht und kostet ab der 2. Anfrage
         // nur noch einen Bruchteil.
@@ -156,7 +149,6 @@ export default async function handler(req, res) {
         }],
         messages,
         stream: true
-      })
     }, MODELL_START_MS);
   } catch (e) {
     console.error("Anthropic fetch", e && e.name, e && e.message);

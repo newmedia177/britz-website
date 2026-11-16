@@ -653,6 +653,28 @@ export async function anfrageBefehl(t, an) {
   return null;
 }
 
+// ---- Kundennachricht kam nicht an ---------------------------------------
+// WhatsApp meldet erst nachtraeglich, wenn eine Nachricht an einen Kunden
+// nicht zugestellt wurde (meist: Kunde hat seit ueber 24 Std. nicht
+// geschrieben). Dann darf Dirk nicht glauben, der Kunde habe das Angebot.
+export async function kundenZustellungGescheitert({ kunde, text }) {
+  const a = (await alleLaden()).filter(x => x.kundeNr === String(kunde) && x.status !== "erledigt").pop();
+  if (!a) return false;
+  await akteAendern(a.nr, x => {
+    x.verlauf.push(heuteKurz() + " Nachricht an Kunden NICHT angekommen");
+    x.nachhakOffen = false;
+    // Der Kunde ist nicht mehr per WhatsApp erreichbar
+    x.letzterKontakt = Math.min(x.letzterKontakt || 0, Date.now() - FENSTER_STD * 3600000);
+  });
+  if (!(await einmalHeute("nichtzugestellt:" + a.nr))) return true;
+  await meldenOderAufheben("⚠ Nr. " + a.nr + " · " + (a.name || "Kunde") + ": Meine Nachricht kam NICHT an. " +
+    "WhatsApp lässt nach 24 Std. ohne Antwort des Kunden nichts mehr durch.\n" +
+    (erreichbar(a) ? "Bitte anrufen: " + erreichbar(a) + "\n" : "") +
+    (text ? "Das sollte ankommen:\n„" + String(text).slice(0, 400) + "“" : ""),
+    { kurz: "Nachricht an Nr. " + a.nr + " nicht angekommen", akteNr: a.nr, knoepfe: kartenKnoepfe(await akteFinden(a.nr) || a), prio: 1 }).catch(() => {});
+  return true;
+}
+
 // ---- Knoepfe unter der Karte ------------------------------------------
 // aktion: anruf | vorbei | details | erledigt
 export async function karteAktion(an, aktion, nr) {

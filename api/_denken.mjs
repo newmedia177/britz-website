@@ -15,7 +15,7 @@
 // Uhrzeiten, Hoechstzahl der Nachrichten. Faellt die KI aus, gibt es eine
 // schlichte Karte ohne Empfehlung und keine Nachricht an den Kunden.
 
-import { fetchMitZeit } from "./_termin.mjs";
+import { kiRufen } from "./_termin.mjs";
 
 const MODELL = () => process.env.CLAUDE_MODEL_DENKEN || process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
@@ -86,11 +86,7 @@ export function nachrichtPruefen(text) {
 export async function kiKurz(system, nutzer, maxTokens = 500, zeitMs = 20000) {
   if (!process.env.ANTHROPIC_API_KEY) return "";
   try {
-    const r = await fetchMitZeit("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODELL(), max_tokens: maxTokens, system, messages: [{ role: "user", content: String(nutzer).slice(0, 24000) }] })
-    }, zeitMs);
+    const r = await kiRufen({ model: MODELL(), max_tokens: maxTokens, system, messages: [{ role: "user", content: String(nutzer).slice(0, 24000) }] }, zeitMs);
     if (!r.ok) { console.error("denken", r.status); return ""; }
     const j = await r.json();
     return (j.content || []).filter(c => c.type === "text").map(c => c.text).join("").trim();
@@ -112,7 +108,7 @@ export async function lageBeurteilen({ akte, zuege, anlass = "karte", fakten = {
                 : akte.status === "angebot" ? "Angebot ist raus" : akte.status === "termin" ? "Termin gebucht" : "nur Gespräch") +
     (wartetTage >= 1 ? ", Anfrage ist " + wartetTage + " Tag(e) alt" : "") + "\n\n" +
     "GESPRÄCH:\n" + text + "\n\n" + auftrag(anlass, fakten);
-  const roh = await kiKurz(GRUND, kopf, 600);
+  const roh = await kiKurz(GRUND, kopf, 1200);
   const j = jsonAus(roh);
   if (!j || typeof j !== "object") return null;
   const s = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);

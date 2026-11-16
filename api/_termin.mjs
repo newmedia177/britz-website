@@ -166,6 +166,45 @@ export async function medienHochladen(base64) {
 // Stunden nach der letzten Nachricht des Empfaengers zu. Schreibt der
 // Inhaber laenger nichts, kaeme eine Terminmeldung sonst STILL nicht an.
 // Greift nur, wenn RESEND_API_KEY gesetzt ist - sonst passiert nichts.
+// ---- Anfrage an die KI ------------------------------------------------
+// Die Modelle der 5er-Reihe "denken" von sich aus vor jeder Antwort, und
+// dieses Nachdenken zaehlt in max_tokens mit. Bei knappen Grenzen (700 im
+// Web-Chat, 900 auf WhatsApp, 1800 in der Lernrunde) blieb dann fuer den
+// eigentlichen Text oft nichts uebrig: leere Antworten (Fehlerliste
+// "Bloecke=thinking, stop_reason=max_tokens") und eine Lernrunde, die seit
+// September nie lief. Alex braucht dieses Vorab-Nachdenken nicht; er
+// antwortet ohne schneller und vollstaendig.
+//   Sonnet 5 und Aehnliche:  thinking { type: "disabled" }
+//   Sonnet 5.5:              thinking { type: "between_tools" } (disabled = Fehler 400)
+// Lehnt ein Modell die Einstellung ab, geht dieselbe Anfrage noch einmal
+// ohne raus, dann mit doppeltem Spielraum.
+export function ohneVorabDenken(modell) {
+  const m = String(modell || "");
+  if (/5[-.]5|5[-.][6-9]/.test(m)) return { type: "between_tools" };
+  if (/claude-(sonnet|opus|haiku|fable|mythos)-5\b|-5$/.test(m)) return { type: "disabled" };
+  return null;          // aeltere Modelle denken ohnehin nicht von selbst
+}
+
+export async function kiRufen(body, zeitMs) {
+  const kopf = {
+    "content-type": "application/json",
+    "x-api-key": process.env.ANTHROPIC_API_KEY,
+    "anthropic-version": "2023-06-01"
+  };
+  const denken = ohneVorabDenken(body.model);
+  const mit = denken && !body.thinking ? { ...body, thinking: denken } : body;
+  let r = await fetchMitZeit("https://api.anthropic.com/v1/messages", { method: "POST", headers: kopf, body: JSON.stringify(mit) }, zeitMs);
+  if (r.status === 400 && mit !== body) {
+    const t = await r.clone().text().catch(() => "");
+    if (/thinking/i.test(t)) {
+      console.error("KI lehnt thinking-Einstellung ab, zweiter Versuch ohne", t.slice(0, 160));
+      const ohne = { ...body, max_tokens: Math.max(body.max_tokens || 1000, 1000) * 2 };
+      r = await fetchMitZeit("https://api.anthropic.com/v1/messages", { method: "POST", headers: kopf, body: JSON.stringify(ohne) }, zeitMs);
+    }
+  }
+  return r;
+}
+
 export async function sendMail(betreff, text, empfaenger) {
   const key = process.env.RESEND_API_KEY;
   const an = empfaenger || process.env.NOTFALL_MAIL || "schaden@alb.berlin";
@@ -210,7 +249,9 @@ export async function sendWA(to, body) {
       })
     }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) { console.error("send", r.status, await r.text().catch(() => "")); return false; }
-    return await kennungAus(r);
+    const id = await kennungAus(r);
+    await sendungMerken(id, { to, text: String(body).slice(0, 3900) });
+    return id;
   } catch (e) {
     console.error("send", e);
     return false;
@@ -223,6 +264,12 @@ export async function sendWA(to, body) {
 async function kennungAus(r) {
   try { const j = await r.json(); return (j && j.messages && j.messages[0] && j.messages[0].id) || true; }
   catch (_) { return true; }
+}
+// Was an wen ging, drei Tage lang, damit eine spaete Fehlermeldung von
+// WhatsApp zugeordnet werden kann.
+async function sendungMerken(id, info) {
+  if (typeof id !== "string") return;
+  await redis("SET", "wa:out:" + id, JSON.stringify({ ...info, ts: Date.now() }), "EX", 3 * 86400);
 }
 
 // ---- Nachricht mit bis zu drei Antwort-Knoepfen ----------------------
@@ -247,7 +294,9 @@ export async function sendWAKnoepfe(to, text, knoepfe) {
       })
     }, NETZ_ZEITLIMIT_MS);
     if (!r.ok) { console.error("knoepfe", r.status, await r.text().catch(() => "")); return false; }
-    return await kennungAus(r);
+    const id = await kennungAus(r);
+    await sendungMerken(id, { to, text: String(text).slice(0, 1024), knoepfe: k });
+    return id;
   } catch (e) { console.error("knoepfe", e && e.message); return false; }
 }
 
@@ -270,6 +319,22 @@ export async function sendWAGelesen(nachrichtId) {
 function nummernAus(s) {
   return String(s || "").split(",").map(x => x.replace(/\D/g, "")).filter(Boolean);
 }
+// ---- Das 24-Stunden-Fenster der Inhaber ---------------------------------
+// Jede Nachricht von Dirk (auch ein Knopf-Tipp) oeffnet es fuer 24 Std.
+// Wir merken uns den Zeitpunkt. Ist das Fenster sicher zu, versucht Alex
+// es gar nicht erst frei, sondern hebt auf und stupst per Vorlage oder
+// E-Mail an. Nur wenn wir es nicht wissen (vor der ersten Nachricht nach
+// diesem Update), wird frei versucht; scheitert das, meldet WhatsApp es
+// spaeter und zustellungGescheitert() holt es nach.
+export async function inhaberHatGeschrieben(n) {
+  await redis("SET", "inhaber:fenster:" + n, String(Date.now()), "EX", 60 * 86400);
+}
+async function inhaberFenster(n) {
+  const w = await redis("GET", "inhaber:fenster:" + n);
+  if (w === undefined || w === null) return "unbekannt";
+  return Date.now() - Number(w) < 23.5 * 3600000 ? "offen" : "zu";
+}
+
 // Wer Kundenmeldungen bekommt (Dirk).
 export function inhaberNummern() {
   return nummernAus(process.env.OWNER_NUMBERS);
@@ -363,50 +428,94 @@ async function karteMerken(id, akteNr) {
 export async function zustellenAnInhaber(text, { kurz, art = "meldung", bilder = [], knoepfe = null, akteNr = 0 } = {}) {
   const nummern = art === "technik" ? technikNummern() : inhaberNummern();
   if (!nummern.length) return false;
-  const titel = vorlagenFeld(kurz || String(text).split("\n")[0], 120);
   let irgendwo = false;
 
   for (const n of nummern) {
-    // Stufe 1
-    const id = await freiSenden(n, text, knoepfe);
-    if (id) {
-      await karteMerken(id, akteNr);
-      for (const b of (bilder || [])) await sendWABild(n, b, titel);
-      irgendwo = true;
-      continue;
-    }
-    // Stufe 2: aufheben + anstupsen
-    const liste = await jsonLesen("unzugestellt:" + n, []);
-    liste.push({ text: String(text).slice(0, 3900), bilder: bilder || [], knoepfe: knoepfe || null, akteNr: akteNr || 0, ts: Date.now() });
-    await jsonSchreiben("unzugestellt:" + n, liste.slice(-40), 14 * 86400);
-
-    const vorlage = art === "tagesstart"
-      ? (process.env.WA_VORLAGE_TAGESSTART || process.env.WA_VORLAGE_INHABER)
-      : process.env.WA_VORLAGE_INHABER;
-    let angestupst = false;
-    if (vorlage) {
-      const zuletzt = Number(await redis("GET", "anstupser:" + n)) || 0;
-      if (Date.now() - zuletzt < ANSTUPSER_PAUSE_MS) {
-        angestupst = true;     // schon angestupst, kommt mit dem naechsten Tipp
-      } else if (await sendWAVorlage(n, vorlage, [titel])) {
-        await redis("SET", "anstupser:" + n, String(Date.now()), "EX", 86400);
-        angestupst = true;
-      } else {
-        await fehlerLog("vorlage", "Vorlage " + vorlage + " von WhatsApp abgelehnt");
+    const eintrag = { text: String(text).slice(0, 3900), bilder: bilder || [], knoepfe: knoepfe || null, akteNr: akteNr || 0, kurz: kurz || "", art };
+    // Stufe 1: frei, wenn das Fenster offen ist oder wir es nicht wissen
+    if ((await inhaberFenster(n)) !== "zu") {
+      const id = await freiSenden(n, text, knoepfe);
+      if (id) {
+        await karteMerken(id, akteNr);
+        // Fuer den Fall, dass WhatsApp spaeter "nicht zugestellt" meldet
+        await sendungMerken(id, { to: n, inhaber: true, eintrag });
+        for (const b of (bilder || [])) await sendWABild(n, b, vorlagenFeld(kurz || String(text).split("\n")[0], 120));
+        irgendwo = true;
+        continue;
       }
     }
-    if (angestupst) { irgendwo = true; continue; }
-
-    // Stufe 3: E-Mail
-    const ok = await sendMail("Alex: " + titel.slice(0, 80), String(text) +
-      "\n\n────────\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
-      "nicht zustellen konnte. Sobald du Alex kurz schreibst, kommt alles " +
-      "Liegengebliebene auch dort an.",
-      art === "technik" ? (process.env.TECHNIK_MAIL || process.env.NOTFALL_MAIL) : undefined);
-    if (ok) irgendwo = true;
-    else await fehlerLog("zustellung", "Meldung an Inhaber weder per WhatsApp noch per E-Mail zugestellt: " + titel);
+    if (await aufhebenUndAnstupsen(n, eintrag)) irgendwo = true;
   }
   return irgendwo;
+}
+
+// Stufe 2 und 3: aufheben, per Vorlage anstupsen, sonst E-Mail.
+async function aufhebenUndAnstupsen(n, eintrag) {
+  const art = eintrag.art || "meldung";
+  const titel = vorlagenFeld(eintrag.kurz || String(eintrag.text).split("\n")[0], 120);
+  const liste = await jsonLesen("unzugestellt:" + n, []);
+  // Eine Karte je Anfrage: die neuere ersetzt die aeltere (Fotos bleiben)
+  let rest = liste;
+  let fotos = eintrag.bilder || [];
+  if (eintrag.akteNr) {
+    const alt = liste.filter(e => e.akteNr === eintrag.akteNr);
+    fotos = [...new Set([...alt.flatMap(e => e.bilder || []), ...fotos])];
+    rest = liste.filter(e => e.akteNr !== eintrag.akteNr);
+  }
+  rest.push({ text: eintrag.text, bilder: fotos, knoepfe: eintrag.knoepfe || null, akteNr: eintrag.akteNr || 0, ts: Date.now() });
+  await jsonSchreiben("unzugestellt:" + n, rest.slice(-40), 14 * 86400);
+
+  const vorlage = art === "tagesstart"
+    ? (process.env.WA_VORLAGE_TAGESSTART || process.env.WA_VORLAGE_INHABER)
+    : process.env.WA_VORLAGE_INHABER;
+  if (vorlage) {
+    const zuletzt = Number(await redis("GET", "anstupser:" + n)) || 0;
+    if (Date.now() - zuletzt < ANSTUPSER_PAUSE_MS) return true;   // kommt mit dem naechsten Tipp
+    if (await sendWAVorlage(n, vorlage, [titel])) {
+      await redis("SET", "anstupser:" + n, String(Date.now()), "EX", 86400);
+      return true;
+    }
+    await fehlerLog("vorlage", "Vorlage " + vorlage + " von WhatsApp abgelehnt");
+  }
+
+  // Stufe 3: E-Mail. Mehrere Meldungen kurz hintereinander kommen als eine
+  // Mail, nicht als zehn: hoechstens eine je Empfaenger und Stunde, der
+  // Rest steht beim naechsten Mal mit drin.
+  const mailSperre = await redis("SET", "mailsperre:" + n, "1", "NX", "EX", 3600);
+  if (mailSperre === null) return true;
+  const offen = await jsonLesen("unzugestellt:" + n, []);
+  const ok = await sendMail("Alex: " + (offen.length > 1 ? offen.length + " Meldungen für dich" : titel.slice(0, 80)),
+    offen.map(e => e.text).join("\n\n────────\n\n") +
+    "\n\n────────\nDiese Meldung kam per E-Mail, weil WhatsApp sie gerade " +
+    "nicht zustellen konnte (WhatsApp lässt Alex nur schreiben, wenn du ihm in den letzten 24 Stunden geschrieben hast). " +
+    "Sobald du Alex kurz schreibst, kommt alles auch dort an, mit Fotos und Knöpfen.",
+    art === "technik" ? (process.env.TECHNIK_MAIL || process.env.NOTFALL_MAIL) : undefined);
+  if (!ok) {
+    await redis("DEL", "mailsperre:" + n);
+    await fehlerLog("zustellung", "Meldung an Inhaber weder per WhatsApp noch per E-Mail zugestellt: " + titel);
+  }
+  return ok;
+}
+
+// WhatsApp meldet per Webhook, dass eine Nachricht NICHT zugestellt wurde.
+// Rueckgabe: null, oder { kunde, text } wenn es eine Kundennachricht war
+// (die behandelt api/_anfragen.mjs).
+export async function zustellungGescheitert(id, code, grund) {
+  const roh = await redis("GETDEL", "wa:out:" + id);
+  if (!roh) return null;
+  let info = null;
+  try { info = JSON.parse(roh); } catch (_) { return null; }
+  if (!info || !info.to) return null;
+  const istInhaber = berechtigteNummern().includes(String(info.to));
+  if (istInhaber) {
+    // Fenster ist offensichtlich zu: ab jetzt gleich den sicheren Weg
+    await redis("SET", "inhaber:fenster:" + info.to, "0", "EX", 60 * 86400);
+    const eintrag = info.eintrag || { text: info.text || "", bilder: [], knoepfe: info.knoepfe || null, akteNr: 0, kurz: "", art: "meldung" };
+    await aufhebenUndAnstupsen(String(info.to), eintrag);
+    return null;
+  }
+  await fehlerLog("kunde-nicht-zugestellt", "WhatsApp an Kunde …" + String(info.to).slice(-4) + " nicht zugestellt (" + code + (grund ? ", " + String(grund).slice(0, 60) : "") + ")");
+  return { kunde: String(info.to), text: info.text || "", code };
 }
 
 // Alles Aufgehobene ausliefern, sobald der Inhaber schreibt (dann ist das
